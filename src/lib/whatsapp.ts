@@ -1,0 +1,61 @@
+import { Order } from "./types";
+import { formatBRL, SHIPPING_METHOD_LABELS, DELIVERY_CITY_LABELS } from "./shipping";
+
+const WA_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "5571930084646";
+
+/**
+ * Monta a mensagem formatada que vai no WhatsApp ao finalizar o pedido.
+ * Usa emojis e espaçamento pra ficar legível direto no app.
+ */
+export function buildWhatsAppMessage(order: Order): string {
+  const itemLines = order.items
+    .map(
+      (i) =>
+        `  • ${i.quantity}× ${i.name} — ${formatBRL(i.unit_price_cents * i.quantity)}`
+    )
+    .join("\n");
+
+  const shipping =
+    order.shipping_cents === 0
+      ? "A combinar"
+      : formatBRL(order.shipping_cents);
+
+  const shippingLabel =
+    SHIPPING_METHOD_LABELS[order.shipping_method] +
+    (order.shipping_city ? ` — ${DELIVERY_CITY_LABELS[order.shipping_city]}` : "");
+
+  const lines = [
+    `🎉 *Novo pedido — Plin Designs*`,
+    ``,
+    `📋 *Código:* ${order.order_code}`,
+    ``,
+    `👤 *Cliente:* ${order.customer_name}`,
+    `📞 *Telefone:* ${order.customer_phone}`,
+    `📧 *E-mail:* ${order.customer_email}`,
+    ``,
+    `🛍️ *Itens:*`,
+    itemLines,
+    ``,
+    `🚚 *Entrega:* ${shippingLabel}`,
+    `   Frete: ${shipping}`,
+    ``,
+    `💰 *Subtotal:* ${formatBRL(order.subtotal_cents)}`,
+    `💰 *Total:* ${formatBRL(order.total_cents)}`,
+    order.note ? `\n📝 *Obs:* ${order.note}` : "",
+    ``,
+    `_Pedido enviado pelo site plindesigns.com.br_`,
+  ]
+    .filter((l) => l !== undefined)
+    .join("\n");
+
+  return lines;
+}
+
+/**
+ * Retorna a URL `wa.me` com a mensagem pré-preenchida.
+ * Deve ser aberta via window.location.href no client.
+ */
+export function buildWhatsAppUrl(order: Order): string {
+  const msg = buildWhatsAppMessage(order);
+  return `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`;
+}
