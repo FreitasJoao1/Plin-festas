@@ -2,19 +2,12 @@
 
 import { MessageCircle } from "lucide-react";
 
-// TODO: defina NEXT_PUBLIC_WHATSAPP_NUMBER no .env.local com o número real
-// da loja (formato internacional, só dígitos, ex: 5571999999999).
-// Esse placeholder abaixo é só para o link não quebrar em modo demo.
-const WHATSAPP_NUMBER =
-  process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "5571900000000";
+const WHATSAPP_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "5571993008464";
 
-const DEFAULT_MESSAGE =
-  "Oi! Vim do site da Plin Designs e gostaria de saber mais 🎉";
+const DEFAULT_MESSAGE = "Oi! Vim do site da Plin Designs e gostaria de saber mais 🎉";
 
 export default function WhatsAppButton() {
-  const href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(
-    DEFAULT_MESSAGE
-  )}`;
+  const href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(DEFAULT_MESSAGE)}`;
 
   return (
     <a
