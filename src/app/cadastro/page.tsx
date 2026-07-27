@@ -57,7 +57,7 @@ export default function CadastroPage() {
     setLoading(true);
 
     // URL oficial de redirecionamento do e-mail de confirmação
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://plin-festas-zeta.vercel.app";
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://plin-design-zeta.vercel.app";
 
     const { error } = await supabase.auth.signUp({
       email,
