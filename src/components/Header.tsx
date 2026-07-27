@@ -12,7 +12,6 @@ import {
   Moon, 
   ShieldAlert, 
   Package, 
-  Settings, 
   LogOut, 
   ChevronDown 
 } from 'lucide-react';
@@ -33,12 +32,14 @@ export default function Header() {
 
   // Carregar estado do usuário e tema
   useEffect(() => {
+    if (!supabase) return;
+
     async function loadUser() {
+      if (!supabase) return;
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
 
       if (user) {
-        // Verifica se o usuário é admin via metadata ou role
         const adminStatus = user.user_metadata?.is_admin || user.app_metadata?.role === 'admin';
         setIsAdmin(!!adminStatus);
       }
@@ -86,7 +87,9 @@ export default function Header() {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
     setIsUserMenuOpen(false);
     setUser(null);
     setIsAdmin(false);
@@ -149,7 +152,6 @@ export default function Header() {
                   <p className="text-sm font-semibold truncate">{user.email}</p>
                 </div>
 
-                {/* Opção de Admin (Apenas para Administradores) */}
                 {isAdmin && (
                   <Link
                     href="/admin"
