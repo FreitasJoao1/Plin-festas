@@ -1,128 +1,118 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { Eye, EyeOff, Lock, Mail, Loader2 } from 'lucide-react';
+import { useState, Suspense } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
-export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+function LoginForm() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const supabase = createClient();
+  const [loading, setLoading] = useState(false);
+  
   const router = useRouter();
+  const params = useSearchParams();
+  const supabase = createClient();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError(null);
 
-    try {
-      if (!supabase) {
-        throw new Error('Não foi possível inicializar o serviço do Supabase.');
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      router.push('/');
-      router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'Falha ao realizar login. Verifique suas credenciais.');
-    } finally {
-      setLoading(false);
+    if (!supabase) {
+      setError("Login indisponível no momento.");
+      return;
     }
-  };
+
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+
+    if (error) {
+      setError("E-mail ou senha incorretos.");
+      return;
+    }
+    router.push(params.get("redirect") || "/conta");
+    router.refresh();
+  }
 
   return (
-    <div className="container mx-auto flex items-center justify-center min-h-[calc(100vh-8rem)] px-4 py-12">
-      <div className="w-full max-w-md space-y-8 bg-card p-8 rounded-2xl border shadow-sm">
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-black tracking-tight">Acessar Conta</h1>
-          <p className="text-sm text-muted-foreground">
-            Entre para gerenciar seus pedidos e preferências
-          </p>
+    <div className="container-plin flex justify-center py-16">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm rounded-3xl border border-pink-100 p-8 shadow-sm transition-shadow hover:shadow-md"
+      >
+        <h1 className="font-display text-2xl text-ink">Entrar</h1>
+        <p className="mt-1 text-sm text-ink-soft">
+          Acompanhe seus pedidos na Plin Designs.
+        </p>
+
+        <div className="mt-6 flex flex-col gap-3">
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="E-mail"
+            className="rounded-xl border border-pink-200 px-4 py-2.5 outline-none transition-colors focus:border-pink-500"
+          />
+
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Senha"
+              className="w-full rounded-xl border border-pink-200 px-4 py-2.5 pr-10 outline-none transition-colors focus:border-pink-500"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-3 text-pink-400 hover:text-pink-600"
+            >
+              {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-2 text-right">
+          <Link href="/esqueci-senha" className="text-sm font-medium text-pink-600 hover:text-lilac-500">
+            Esqueci minha senha
+          </Link>
         </div>
 
         {error && (
-          <div className="p-3 text-sm text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg">
+          <p className="mt-4 rounded-xl bg-pink-100 px-4 py-3 text-sm text-pink-700">
             {error}
-          </div>
+          </p>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-sm font-medium">E-mail</label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="seu@email.com"
-                className="w-full pl-10 pr-4 py-2 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-          </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-6 w-full rounded-full bg-pink-500 py-3 font-semibold text-white transition-colors hover:bg-lilac-500 disabled:opacity-60"
+        >
+          {loading ? "Entrando..." : "Entrar"}
+        </button>
 
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="text-sm font-medium">Senha</label>
-              <Link
-                href="/esqueci-senha"
-                className="text-xs text-primary hover:underline"
-              >
-                Esqueceu a senha?
-              </Link>
-            </div>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 px-4 bg-primary text-primary-foreground font-semibold rounded-lg shadow hover:opacity-90 transition-opacity flex items-center justify-center"
-          >
-            {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Entrar'}
-          </button>
-        </form>
-
-        <div className="text-center text-sm text-muted-foreground">
-          Ainda não tem uma conta?{' '}
-          <Link href="/cadastro" className="font-semibold text-primary hover:underline">
+        <p className="mt-4 text-center text-sm text-ink-soft">
+          Não tem conta?{" "}
+          <Link href="/cadastro" className="font-medium text-pink-600 hover:text-lilac-500">
             Cadastre-se
           </Link>
-        </div>
-      </div>
+        </p>
+      </form>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="container-plin flex justify-center py-16 text-ink-soft">Carregando...</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }
