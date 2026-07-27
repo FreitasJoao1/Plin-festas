@@ -22,6 +22,10 @@ export default function LoginPage() {
     setError(null);
 
     try {
+      if (!supabase) {
+        throw new Error('Não foi possível inicializar o serviço do Supabase.');
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
