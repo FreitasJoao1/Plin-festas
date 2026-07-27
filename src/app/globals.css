@@ -3,8 +3,11 @@
 @tailwind utilities;
 
 @layer base {
-  html {
+  html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
     scroll-behavior: smooth;
+    background-color: #ffffff !important;
   }
 
   body {
@@ -15,7 +18,6 @@
     @apply font-display;
   }
 
-  /* Foco de teclado visível em qualquer elemento interativo */
   :focus-visible {
     outline: 3px solid theme("colors.pink.400");
     outline-offset: 2px;
@@ -26,11 +28,5 @@
 @layer utilities {
   .container-plin {
     @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-marquee {
-    animation: none !important;
   }
 }
