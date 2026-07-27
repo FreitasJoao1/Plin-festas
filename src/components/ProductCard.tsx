@@ -27,10 +27,10 @@ export default function ProductCard({ product }: { product: Product }) {
   }
 
   return (
-    <div className="group flex flex-col overflow-hidden rounded-3xl border border-pink-100 bg-white transition-all duration-200 hover:-translate-y-1 hover:border-pink-200 hover:shadow-lg">
+    <div className="group flex h-full flex-col overflow-hidden rounded-3xl border border-pink-100 bg-white transition-all duration-200 hover:-translate-y-1 hover:border-pink-200 hover:shadow-lg">
       <Link
         href={`/produtos/${product.slug}`}
-        className="relative block aspect-square overflow-hidden bg-pink-50"
+        className="relative block aspect-square w-full overflow-hidden bg-pink-50"
       >
         <Image
           src={product.images[0]}
@@ -56,44 +56,48 @@ export default function ProductCard({ product }: { product: Product }) {
         )}
       </Link>
 
-      <div className="flex flex-1 flex-col gap-2 p-4">
-        <Link href={`/produtos/${product.slug}`}>
-          <h3 className="line-clamp-2 font-medium text-ink transition-colors hover:text-pink-600">
+      <div className="flex flex-1 flex-col justify-between p-3 sm:p-4">
+        {/* Reservador de espaço para o título manter todos os cards no mesmo nível */}
+        <Link href={`/produtos/${product.slug}`} className="block">
+          <h3 className="line-clamp-2 min-h-[2.5rem] text-sm font-medium leading-tight text-ink transition-colors hover:text-pink-600 sm:text-base">
             {product.name}
           </h3>
         </Link>
 
-        <div className="mt-auto flex items-center gap-2">
-          <span className="text-lg font-semibold text-pink-600">
-            {formatBRL(product.price_cents)}
-          </span>
-          {product.compare_at_price_cents && (
-            <span className="text-sm text-ink-soft line-through">
-              {formatBRL(product.compare_at_price_cents)}
+        {/* Bloco do Preço e Botão fixo no rodapé */}
+        <div className="mt-3 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-base font-bold text-pink-600 sm:text-lg">
+              {formatBRL(product.price_cents)}
             </span>
-          )}
-        </div>
+            {product.compare_at_price_cents && (
+              <span className="text-xs text-ink-soft line-through sm:text-sm">
+                {formatBRL(product.compare_at_price_cents)}
+              </span>
+            )}
+          </div>
 
-        <button
-          type="button"
-          disabled={outOfStock}
-          onClick={handleAdd}
-          className={`mt-1 flex w-full items-center justify-center gap-2 rounded-full py-2.5 text-sm font-semibold text-white transition-all duration-200 disabled:cursor-not-allowed disabled:bg-ink/20 ${
-            justAdded ? "bg-green-500" : "bg-pink-500 hover:bg-lilac-500"
-          }`}
-        >
-          {justAdded ? (
-            <>
-              <Check className="h-4 w-4" />
-              Adicionado!
-            </>
-          ) : (
-            <>
-              <ShoppingBag className="h-4 w-4" />
-              {outOfStock ? "Esgotado" : "Adicionar ao carrinho"}
-            </>
-          )}
-        </button>
+          <button
+            type="button"
+            disabled={outOfStock}
+            onClick={handleAdd}
+            className={`flex w-full items-center justify-center gap-2 rounded-full py-2.5 text-xs font-semibold text-white transition-all duration-200 sm:text-sm disabled:cursor-not-allowed disabled:bg-ink/20 ${
+              justAdded ? "bg-green-500" : "bg-pink-500 hover:bg-lilac-500"
+            }`}
+          >
+            {justAdded ? (
+              <>
+                <Check className="h-4 w-4" />
+                Adicionado!
+              </>
+            ) : (
+              <>
+                <ShoppingBag className="h-4 w-4" />
+                {outOfStock ? "Esgotado" : "Adicionar ao carrinho"}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );
