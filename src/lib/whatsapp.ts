@@ -1,11 +1,11 @@
 import { Order } from "./types";
 import { formatBRL, SHIPPING_METHOD_LABELS, DELIVERY_CITY_LABELS } from "./shipping";
 
-const WA_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "5571930084646";
+// Número oficial da Plin Designs
+const WA_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "5571993008464";
 
 /**
  * Monta a mensagem formatada que vai no WhatsApp ao finalizar o pedido.
- * Usa emojis e espaçamento pra ficar legível direto no app.
  */
 export function buildWhatsAppMessage(order: Order): string {
   const itemLines = order.items
@@ -43,7 +43,7 @@ export function buildWhatsAppMessage(order: Order): string {
     `💰 *Total:* ${formatBRL(order.total_cents)}`,
     order.note ? `\n📝 *Obs:* ${order.note}` : "",
     ``,
-    `_Pedido enviado pelo site plindesigns.com.br_`,
+    `_Pedido enviado pelo site plin-festas-zeta.vercel.app_`,
   ]
     .filter((l) => l !== undefined)
     .join("\n");
@@ -52,8 +52,7 @@ export function buildWhatsAppMessage(order: Order): string {
 }
 
 /**
- * Retorna a URL `wa.me` com a mensagem pré-preenchida.
- * Deve ser aberta via window.location.href no client.
+ * Retorna a URL `wa.me` para redirecionamento direto no WhatsApp do vendedor.
  */
 export function buildWhatsAppUrl(order: Order): string {
   const msg = buildWhatsAppMessage(order);
