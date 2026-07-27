@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Lock, Eye, EyeOff } from "lucide-react";
+import { Lock, Eye, EyeOff, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -44,7 +44,7 @@ export default function LoginPage() {
       return;
     }
 
-    // Se o usuário desmarcar "Lembrar deste dispositivo", a sessão expira ao fechar a aba
+    // Se desmarcar a caixinha, encerra a sessão ao fechar a janela
     if (!rememberMe && typeof window !== "undefined") {
       window.addEventListener("beforeunload", () => {
         supabase.auth.signOut();
@@ -71,47 +71,60 @@ export default function LoginPage() {
           Acesse seus pedidos e informações do seu perfil na Plin Designs.
         </p>
 
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           {/* E-mail */}
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Seu e-mail"
-            className="w-full rounded-xl border border-pink-200 px-4 py-2.5 outline-none transition-colors focus:border-pink-500 text-sm text-ink"
-          />
-
-          {/* Senha */}
-          <div className="relative">
+          <div>
+            <label className="block text-xs font-semibold text-ink mb-1">E-mail</label>
             <input
-              type={showPassword ? "text" : "password"}
+              type="email"
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Sua senha"
-              className="w-full rounded-xl border border-pink-200 px-4 py-2.5 pr-10 outline-none transition-colors focus:border-pink-500 text-sm text-ink"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="seuemail@exemplo.com"
+              className="w-full rounded-xl border border-pink-200 px-4 py-2.5 outline-none transition-colors focus:border-pink-500 text-sm text-ink"
             />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-3 text-pink-400 hover:text-pink-600"
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
           </div>
 
-          {/* Checkbox: Lembrar deste dispositivo */}
-          <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-soft hover:text-ink">
+          {/* Senha */}
+          <div>
+            <label className="block text-xs font-semibold text-ink mb-1">Senha</label>
+            <div className="relative">
               <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-pink-300 text-pink-500 focus:ring-pink-400 cursor-pointer accent-pink-500"
+                type={showPassword ? "text" : "password"}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Sua senha"
+                className="w-full rounded-xl border border-pink-200 px-4 py-2.5 pr-10 outline-none transition-colors focus:border-pink-500 text-sm text-ink"
               />
-              <span>Lembrar deste dispositivo</span>
-            </label>
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-3 text-pink-400 hover:text-pink-600"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* CAIXINHA ESTILIZADA DE LEMBRAR ESTE DISPOSITIVO */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setRememberMe(!rememberMe)}
+              className="flex items-center gap-2.5 text-xs text-ink cursor-pointer select-none"
+            >
+              <div
+                className={`flex h-5 w-5 items-center justify-center rounded-md border transition-all ${
+                  rememberMe
+                    ? "bg-pink-500 border-pink-500 text-white shadow-sm"
+                    : "border-pink-300 bg-white hover:border-pink-400"
+                }`}
+              >
+                {rememberMe && <Check className="h-3.5 w-3.5 stroke-[3]" />}
+              </div>
+              <span className="font-medium text-ink-soft">Lembrar deste dispositivo</span>
+            </button>
           </div>
         </div>
 
