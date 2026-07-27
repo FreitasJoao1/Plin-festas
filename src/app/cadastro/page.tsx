@@ -64,7 +64,7 @@ export default function CadastroPage() {
       password,
       options: {
         data: { full_name: name, phone },
-        emailRedirectTo: `${siteUrl}/login`,
+        emailRedirectTo: `https://plin-design-zeta.vercel.app/login`,
       },
     });
     setLoading(false);
