@@ -56,6 +56,10 @@ export default function CadastroPage() {
     }
 
     try {
+      if (!supabase) {
+        throw new Error('Não foi possível inicializar o serviço do Supabase.');
+      }
+
       const { error } = await supabase.auth.signUp({
         email,
         password,
@@ -149,13 +153,14 @@ export default function CadastroPage() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Mínimo 6 caracteres"
+                placeholder="••••••••"
                 className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -171,13 +176,14 @@ export default function CadastroPage() {
                 required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Repita sua senha"
+                placeholder="••••••••"
                 className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <button
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                title={showConfirmPassword ? 'Ocultar senha' : 'Exibir senha'}
               >
                 {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -189,7 +195,7 @@ export default function CadastroPage() {
             disabled={loading}
             className="w-full py-2.5 px-4 bg-primary text-primary-foreground font-semibold rounded-lg shadow hover:opacity-90 transition-opacity flex items-center justify-center"
           >
-            {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Criar Conta'}
+            {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Cadastrar'}
           </button>
         </form>
 
