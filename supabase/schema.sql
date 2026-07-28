@@ -177,6 +177,62 @@ create policy "orders_admin_update"
   using (public.is_admin())
   with check (public.is_admin());
 
+-- Cliente pode cancelar o PRÓPRIO pedido, mas só enquanto ele ainda não
+-- entrou em produção/foi concluído. A cláusula "using" trava quais linhas
+-- podem ser tocadas (dono + status atual ainda cancelável); o "with check"
+-- trava o que a linha pode virar depois do update (só 'cancelado').
+drop policy if exists "orders_client_cancel" on public.orders;
+create policy "orders_client_cancel"
+  on public.orders for update
+  using (
+    auth.uid() = user_id
+    and status in ('novo', 'confirmado')
+  )
+  with check (
+    auth.uid() = user_id
+    and status = 'cancelado'
+  );
+
+-- RLS "with check" só valida o VALOR FINAL das colunas, não impede que o
+-- mesmo UPDATE altere outras colunas (total_cents, items etc.) junto com o
+-- status. Este trigger fecha essa brecha: se quem está fazendo o update
+-- não é admin, qualquer alteração fora de "status" é rejeitada. Isso
+-- protege mesmo que alguém tente chamar o Supabase direto do navegador,
+-- pulando a rota /api/pedidos/[id]/cancelar.
+create or replace function public.enforce_client_cancel_only_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if public.is_admin() then
+    return new;
+  end if;
+
+  if (
+    new.order_code, new.user_id, new.customer_name, new.customer_phone,
+    new.customer_email, new.note, new.items, new.subtotal_cents,
+    new.shipping_method, new.shipping_city, new.shipping_cents,
+    new.total_cents, new.created_at
+  ) is distinct from (
+    old.order_code, old.user_id, old.customer_name, old.customer_phone,
+    old.customer_email, old.note, old.items, old.subtotal_cents,
+    old.shipping_method, old.shipping_city, old.shipping_cents,
+    old.total_cents, old.created_at
+  ) then
+    raise exception 'Apenas o status do pedido pode ser alterado pelo cliente.';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists orders_client_cancel_guard on public.orders;
+create trigger orders_client_cancel_guard
+  before update on public.orders
+  for each row execute function public.enforce_client_cancel_only_status();
+
 -- ============================================================================
 -- 5. STORAGE — bucket público para fotos dos produtos
 -- ============================================================================

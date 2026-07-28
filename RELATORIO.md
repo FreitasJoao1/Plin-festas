@@ -1,109 +1,115 @@
-# Relatório Final — Plin Designs
+# Relatório — Rodada atual de mudanças
 
-`npm run typecheck` limpo. Nenhuma credencial aparece neste relatório,
-no README ou em qualquer arquivo do zip — todas ficam exclusivamente em
-`.env.local`, que está no `.gitignore` e nunca deve ser commitado.
-
----
-
-## 1. INTEGRAÇÃO COM SUPABASE
-
-Credenciais configuradas em `.env.local`. **Ação que só você pode
-fazer** (meu ambiente não tem acesso de rede ao seu projeto):
-
-1. Abra `https://supabase.com/dashboard/project/pprbiwlqrxmwriwlliaa/sql/new`
-2. Cole o conteúdo INTEIRO de `supabase/schema.sql` e clique em "Run"
-   → cria tabelas, RLS, bucket de Storage, Realtime, e os 39 produtos reais
-3. Cadastre-se pelo site em `/cadastro`
-4. No SQL Editor, rode:
-   ```sql
-   update public.profiles set role = 'admin'
-   where id = (select id from auth.users where email = 'seu-email@aqui.com');
-   ```
-5. Login em `/login` → acesse `/admin`
-
-*(Detalhes completos e o passo a passo de deploy estão no `README.md`.)*
+`npx tsc --noEmit` limpo. `npm run build` completo sem erros. Nenhuma
+credencial em nenhum arquivo deste zip.
 
 ---
 
-## 2. RECURSOS DO SUPABASE EM USO
+## 1. Checkout instantâneo
 
-Conforme pedido — "use todos os adereços disponíveis pela Supabase":
+**Antes:** botão exigia segurar (mouse/touch) por 2 segundos, com barra
+de progresso, antes de disparar o pedido.
 
-| Recurso | Onde |
-|---|---|
-| **Auth** (login/senha) | `/login`, `/cadastro` |
-| **Confirmação de e-mail** | Automática no cadastro |
-| **Recuperação de senha** | `/esqueci-senha` + `/redefinir-senha` (novo) |
-| **Trigger de banco** (`handle_new_user`) | Cria `profiles` automaticamente no cadastro |
-| **Row Level Security** | Em `profiles`, `products`, `orders` e no bucket de Storage |
-| **Storage** | Bucket `product-images` — upload real de fotos no admin |
-| **Realtime** | Notificação ao vivo de pedido novo no painel admin (novo) |
-| **Server-Side Rendering** (`@supabase/ssr`) | Clients de browser/server/middleware seguindo o padrão oficial |
+**Agora:** clique único, sem delay artificial. `src/app/checkout/page.tsx`
+— removida toda a lógica de `holdProgress`/`isHolding`/`setInterval`,
+substituída por `handleConfirm` disparado direto no `onClick`.
 
----
-
-## 3. FUNCIONALIDADES NOVAS NESTA RODADA
-
-- **Esqueci minha senha** e **Redefinir senha** — fluxo completo
-- **Saudação do cliente logado** no header: "Olá, [nome]! Como posso te
-  ajudar hoje?" com gradiente da marca
-- **Upload real de fotos** no CRUD de produtos (antes era só colar URL)
-- **Dashboard com 4 gráficos reais** (recharts): receita por dia, pedidos
-  por status, pedidos por dia, produtos mais pedidos
-- **Notificação em tempo real** de pedido novo no admin (Supabase Realtime)
-- **Logo maior** (h-9 → h-14/h-16) e com as cores hex exatas da marca, em
-  todo lugar (header, footer, admin — antes só o header tinha a logo SVG)
-- **Hover rosa→lilás** padronizado em todos os botões principais do site
-  e do admin
-- **ProductCard mais vivo**: hover levanta o card, botão muda de cor,
-  feedback "Adicionado! ✓" ao clicar, badge de pedido mínimo
+**Ressalva que você deve saber:** o hold-to-confirm não era só
+performance — era proteção contra clique acidental num botão que manda
+mensagem de pedido pro WhatsApp da loja. Removi porque foi pedido
+explicitamente, mas é uma troca real: menos fricção, mais risco de
+clique sem querer. Se isso virar problema na prática (pedidos abertos
+por engano), a correção mais barata é um passo de revisão do carrinho
+antes do botão final, não trazer o delay de volta.
 
 ---
 
-## 4. SEGURANÇA — TUDO QUE FOI CORRIGIDO
+## 2. Cancelamento de pedido pelo cliente
 
-| Onde | Problema | Correção |
+Não existia. A aba "Meus Pedidos" em `/conta` era 100% estática (sempre
+mostrava "nenhum pedido encontrado", sem buscar nada do banco).
+Implementado do zero:
+
+- **Listagem real** de pedidos do cliente logado em `/conta` (busca em
+  `orders` filtrando por `user_id`, com RLS garantindo que só vê os
+  próprios).
+- **Botão de cancelar**, visível só quando o pedido ainda está em
+  `novo` ou `confirmado` — ou seja, ainda não `em_producao`, `pronto`,
+  `enviado` ou `entregue`, exatamente a regra pedida. Pede confirmação
+  inline antes de efetivar.
+- **Rota nova:** `POST /api/pedidos/[id]/cancelar` (rate-limited,
+  autenticada, confere dono do pedido e status atual antes de agir).
+- **Banco:** nova policy RLS `orders_client_cancel` + trigger
+  `orders_client_cancel_guard` em `supabase/schema.sql`. O trigger existe
+  porque RLS `with check` sozinho não impede que um update malicioso
+  mude `status` E outras colunas (preço, itens) na mesma chamada — o
+  trigger rejeita qualquer alteração que não seja exclusivamente
+  `status`, vinda de quem não é admin.
+
+**Ação que só você pode fazer:** rodar a seção de RLS atualizada do
+`supabase/schema.sql` no SQL Editor do Supabase (é idempotente, pode
+rodar o arquivo inteiro de novo sem risco).
+
+---
+
+## 3. Falha de design corrigida: admin decidido por campo editável pelo cliente
+
+Achado durante o pente-fino, fora do escopo original, mas real: `Header.tsx`
+e `conta/page.tsx` decidiam se mostravam UI de admin olhando
+`user.user_metadata?.is_admin`. Esse campo é editável pelo próprio
+usuário via `supabase.auth.updateUser()` — a mesma chamada já usada em
+"Salvar Alterações" do perfil. Ou seja, em teoria, qualquer pessoa
+logada poderia setar esse campo em si mesma pelo console do navegador e
+ver o link "Painel Admin" aparecer.
+
+**Importante, para não gerar alarme maior do que o real:** isso NÃO dava
+acesso de fato ao banco ou ao painel — o middleware e toda RLS já usam
+exclusivamente `profiles.role`, que é protegido (cliente não consegue se
+autopromover, ver policy `profiles_update_own`). O impacto real era só
+UI enganosa. Ainda assim, é o tipo de padrão que não deveria existir.
+
+**Correção:** ambos os arquivos agora leem `isAdmin` exclusivamente de
+`profiles.role`, buscado do banco.
+
+---
+
+## 4. Pente-fino de segurança — demais itens
+
+| Item | Situação encontrada | Ação |
 |---|---|---|
-| `/api/checkout` | Sem validação de runtime (quantidade negativa/absurda aceita, JSON malformado derrubava a rota) | Validação completa + `try/catch` |
-| `/api/checkout` | Sem proteção contra flood | Rate limit: 8 pedidos/min por IP |
-| `/api/frete` | CEP e itens não validados, sem proteção contra flood | Regex de CEP, limite de itens, rate limit 20/min por IP |
-| `/api/admin/produtos` (criar/editar) | Sem validação de preço, categoria, slug, imagens | Validador dedicado (`validate-product.ts`) |
-| `/api/admin/produtos/[id]`, `/api/admin/pedidos/[id]` | ID da URL não validado antes do banco | Checagem de formato UUID |
-| Upload de fotos | Sem limite de tamanho/tipo | 5MB máx., só JPG/PNG/WEBP/GIF — validado no client **e** no bucket (defesa em profundidade) |
-| `next.config.mjs` | Sem headers de segurança | `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` |
-| Cadastro/redefinição de senha | Mínimo 6 caracteres | Elevado para 8 |
-| `mercadopago` (pacote npm) | Dependência morta, superfície de ataque à toa | Removida |
-| `/checkout/sucesso`, `/checkout/erro`, `/api/webhook/mercadopago`, `lib/mercadopago.ts` | Código órfão do fluxo antigo de pagamento | Removidos |
-| `profiles` (RLS) | — | Policy impede cliente se autopromover a admin |
-| Storage | — | RLS do bucket: leitura pública, escrita só admin |
+| CSP (Content-Security-Policy) | Inexistente | Adicionada em `next.config.mjs`, restringindo script/style/img/connect a origens conhecidas (Supabase, Unsplash, Melhor Envio) |
+| HSTS | Inexistente | `Strict-Transport-Security: max-age=31536000; includeSubDomains` adicionado |
+| Permissions-Policy | Bloqueava só camera/mic/geolocation | Adicionado `payment=(), usb=()` |
+| `.env.example` | Ainda referenciava `MERCADOPAGO_ACCESS_TOKEN` e webhook, de uma integração já removida do código | Limpo — seção Mercado Pago inteira removida, comentário de `NEXT_PUBLIC_SITE_URL` corrigido |
+| `cadastro/page.tsx` | `emailRedirectTo` ignorava a variável `siteUrl` já calculada e usava URL hardcoded | Corrigido para usar `siteUrl` de fato |
+| Validação server-side do checkout | Já robusta (revisada, sem mudanças) | — |
+| Rate limiting | Já existente e documentado (limitação de ser em memória) | Aplicado o mesmo padrão na nova rota de cancelamento (15/min por IP) |
+| RLS de `orders`/`products`/`profiles` | Já corretas | — |
+| Proteção dupla de `/api/admin/*` | Já existente (`requireAdmin()`) | — |
 
-**Limitação conhecida e documentada**: o rate-limiting é em memória
-(por instância do servidor). Funciona bem para o volume de uma loja
-pequena/média, mas se o tráfego crescer muito, o ideal é migrar para um
-rate-limiter de borda (Vercel Firewall) ou com Redis — deixei isso
-comentado no código (`src/lib/rate-limit.ts`) para quando for relevante.
+**Não corrigido, e por quê:** `script-src 'unsafe-inline'` na CSP é mais
+permissivo do que o ideal — o endurecimento correto exige gerar um nonce
+por request no middleware e propagá-lo a cada script, o que é mudança de
+arquitetura, não pente-fino. Documentado em `AGENTS.md` para quando fizer
+sentido priorizar.
 
 ---
 
-## 5. ESTRUTURA GERAL (para referência)
+## 5. Documentação
 
-- Checkout finaliza via **WhatsApp** com código de pedido `PLN-DDMM-XXXX`
-- Painel admin: dashboard com gráficos, CRUD de produtos com fotos,
-  gestão de pedidos com todos os detalhes e troca de status
-- Site público: Home, catálogo por categoria, página de produto,
-  checkout, conta do cliente, login/cadastro/recuperação de senha
+- **`README.md`** reescrito: agora descreve o que o produto é e faz, sem
+  passo a passo de instalação (esse conteúdo prático continua nos
+  comentários de topo de `supabase/schema.sql` e `.env.example`).
+- **`AGENTS.md`** (novo): guia técnico para qualquer IA que for mexer no
+  projeto depois — arquitetura de autorização, por que existem duas
+  fontes de identidade e qual é a certa, como o cancelamento funciona em
+  três camadas, o que já foi removido do projeto (Mercado Pago) e por
+  que isso importa para não reintroduzir suposições erradas.
 
 ---
 
-## Como testar agora
+## Verificação
 
-```bash
-npm install
-npm run dev
-```
-
-Sem rodar o `schema.sql` ainda, o site funciona em modo demo (dados
-mock, sem persistência). Depois de rodar o SQL e configurar o `.env.local`
-(já feito), tudo passa a ser real: cadastro, login, produtos, pedidos,
-fotos, gráficos.
+- `npx tsc --noEmit` → sem erros
+- `npm run build` → build de produção completo, rota
+  `/api/pedidos/[id]/cancelar` presente e reconhecida

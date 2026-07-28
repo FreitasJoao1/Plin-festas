@@ -4,18 +4,22 @@ import { MOCK_PRODUCTS } from "@/lib/mock-data";
 import { Product, ProductCategory } from "@/lib/types";
 
 export async function getProducts(opts: {
-  category?: ProductCategory;
+  category?: ProductCategory | ProductCategory[];
 } = {}): Promise<Product[]> {
+  const categories = opts.category
+    ? Array.isArray(opts.category) ? opts.category : [opts.category]
+    : undefined;
+
   if (!isSupabaseConfigured()) {
     const items = MOCK_PRODUCTS.filter((p) => p.active);
-    return opts.category
-      ? items.filter((p) => p.category === opts.category)
+    return categories
+      ? items.filter((p) => categories.includes(p.category))
       : items;
   }
 
   const supabase = await createClient();
   let query = supabase!.from("products").select("*").eq("active", true);
-  if (opts.category) query = query.eq("category", opts.category);
+  if (categories) query = query.in("category", categories);
   const { data, error } = await query.order("created_at", {
     ascending: false,
   });

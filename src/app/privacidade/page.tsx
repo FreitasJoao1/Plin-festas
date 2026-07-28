@@ -36,7 +36,7 @@ export default function PrivacidadePage() {
             2. Quais Dados Coletamos e Para Quê?
           </h2>
           <p className="mb-3">
-            Coletamos apenas os dados essenciais para efetuar o cadastro, processar vendas e entregar seus produtos de papelaria personalizada:
+            Coletamos apenas os dados essenciais para efetuar o cadastro, processar vendas e entregar seus produtos personalizados:
           </p>
           <ul className="list-disc space-y-2 pl-5">
             <li><strong>Nome completo e e-mail:</strong> Para identificação da conta, envio de comprovantes de compra e suporte.</li>

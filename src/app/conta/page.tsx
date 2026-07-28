@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { Order, OrderStatus } from '@/lib/types';
+import { formatBRL } from '@/lib/shipping';
 import { 
   User, 
   Package, 
@@ -13,8 +15,33 @@ import {
   Moon, 
   Sun, 
   Loader2, 
-  CheckCircle2 
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
 } from 'lucide-react';
+
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  novo: 'Novo',
+  confirmado: 'Confirmado',
+  em_producao: 'Em produção',
+  pronto: 'Pronto',
+  enviado: 'Enviado',
+  entregue: 'Entregue',
+  cancelado: 'Cancelado',
+};
+
+const STATUS_COLOR: Record<OrderStatus, string> = {
+  novo: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400',
+  confirmado: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400',
+  em_producao: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
+  pronto: 'bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-400',
+  enviado: 'bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400',
+  entregue: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400',
+  cancelado: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400',
+};
+
+/** Pedido só pode ser cancelado pelo cliente nesses status. */
+const CANCELABLE_STATUSES: OrderStatus[] = ['novo', 'confirmado'];
 
 export default function ContaPage() {
   const [activeTab, setActiveTab] = useState<'perfil' | 'pedidos' | 'configuracoes'>('perfil');
@@ -28,8 +55,34 @@ export default function ContaPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+
   const supabase = createClient();
   const router = useRouter();
+
+  const loadOrders = useCallback(async (userId: string) => {
+    if (!supabase) {
+      setOrdersLoading(false);
+      return;
+    }
+    setOrdersLoading(true);
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      setOrdersError('Não foi possível carregar seus pedidos.');
+    } else {
+      setOrders((data ?? []) as Order[]);
+    }
+    setOrdersLoading(false);
+  }, [supabase]);
 
   useEffect(() => {
     // Detectar hash da URL (ex: #pedidos)
@@ -40,6 +93,7 @@ export default function ContaPage() {
     async function loadUserData() {
       if (!supabase) {
         setLoading(false);
+        setOrdersLoading(false);
         return;
       }
 
@@ -53,19 +107,48 @@ export default function ContaPage() {
       setUser(user);
       setFullName(user.user_metadata?.full_name || '');
       setPhone(user.user_metadata?.phone || '');
-      
-      const adminStatus = user.user_metadata?.is_admin || user.app_metadata?.role === 'admin';
-      setIsAdmin(!!adminStatus);
+
+      // is_admin vem SEMPRE da tabela profiles (fonte de verdade protegida
+      // por RLS), nunca de user_metadata — esse campo é editável pelo
+      // próprio usuário e não deve decidir o que aparece na tela.
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single();
+      setIsAdmin(profile?.role === 'admin');
 
       // Tema
       const savedTheme = localStorage.getItem('theme');
       setIsDarkMode(savedTheme === 'dark' || document.documentElement.classList.contains('dark'));
 
       setLoading(false);
+      loadOrders(user.id);
     }
 
     loadUserData();
-  }, [supabase, router]);
+  }, [supabase, router, loadOrders]);
+
+  const handleCancelOrder = useCallback(async (orderId: string) => {
+    setCancelingId(orderId);
+    setOrdersError(null);
+    try {
+      const res = await fetch(`/api/pedidos/${orderId}/cancelar`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setOrdersError(data.error ?? 'Não foi possível cancelar o pedido.');
+        return;
+      }
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: 'cancelado' } : o))
+      );
+    } catch {
+      setOrdersError('Erro de conexão. Tente novamente.');
+    } finally {
+      setCancelingId(null);
+      setConfirmCancelId(null);
+    }
+  }, []);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,19 +347,97 @@ export default function ContaPage() {
                 </p>
               </div>
 
-              <div className="border rounded-xl p-8 text-center space-y-3">
-                <Package className="h-12 w-12 text-muted-foreground mx-auto" />
-                <h3 className="font-semibold text-lg">Nenhum pedido encontrado</h3>
-                <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-                  Você ainda não realizou nenhum pedido em nossa loja.
-                </p>
-                <Link
-                  href="/produtos"
-                  className="inline-block px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:opacity-90 transition-opacity"
-                >
-                  Explorar Produtos
-                </Link>
-              </div>
+              {ordersError && (
+                <div className="p-3 text-sm flex items-center gap-2 text-red-700 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  {ordersError}
+                </div>
+              )}
+
+              {ordersLoading ? (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </div>
+              ) : orders.length === 0 ? (
+                <div className="border rounded-xl p-8 text-center space-y-3">
+                  <Package className="h-12 w-12 text-muted-foreground mx-auto" />
+                  <h3 className="font-semibold text-lg">Nenhum pedido encontrado</h3>
+                  <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+                    Você ainda não realizou nenhum pedido em nossa loja.
+                  </p>
+                  <Link
+                    href="/produtos"
+                    className="inline-block px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:opacity-90 transition-opacity"
+                  >
+                    Explorar Produtos
+                  </Link>
+                </div>
+              ) : (
+                <ul className="space-y-4">
+                  {orders.map((order) => {
+                    const canCancel = CANCELABLE_STATUSES.includes(order.status);
+                    return (
+                      <li key={order.id} className="border rounded-xl p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-sm">{order.order_code}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(order.created_at).toLocaleDateString('pt-BR', {
+                                day: '2-digit', month: '2-digit', year: 'numeric',
+                              })}
+                            </p>
+                          </div>
+                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLOR[order.status]}`}>
+                            {STATUS_LABEL[order.status]}
+                          </span>
+                        </div>
+
+                        <ul className="text-sm text-muted-foreground space-y-0.5">
+                          {order.items.map((item, idx) => (
+                            <li key={idx}>{item.quantity}× {item.name}</li>
+                          ))}
+                        </ul>
+
+                        <div className="flex items-center justify-between pt-2 border-t">
+                          <span className="font-semibold">{formatBRL(order.total_cents)}</span>
+
+                          {canCancel && (
+                            confirmCancelId === order.id ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">Cancelar de verdade?</span>
+                                <button
+                                  onClick={() => handleCancelOrder(order.id)}
+                                  disabled={cancelingId === order.id}
+                                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-60"
+                                >
+                                  {cancelingId === order.id
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : 'Sim, cancelar'}
+                                </button>
+                                <button
+                                  onClick={() => setConfirmCancelId(null)}
+                                  disabled={cancelingId === order.id}
+                                  className="text-xs font-medium px-3 py-1.5 rounded-lg border hover:bg-accent transition-colors"
+                                >
+                                  Voltar
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmCancelId(order.id)}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30 transition-colors flex items-center gap-1.5"
+                              >
+                                <XCircle className="h-3.5 w-3.5" />
+                                Cancelar pedido
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
           )}
 

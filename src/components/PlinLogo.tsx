@@ -1,20 +1,20 @@
 /**
- * Logo da Plin Designs conforme briefing:
+ * Logo da Plin Design conforme briefing:
  * - "Plin" em gradiente rosa → azul-bebê → lilás
- * - "designs" com cada letra em quadrado/estrela 4 pontas, branco sobre fundo colorido
+ * - "design" com cada letra em quadrado/estrela 4 pontas, branco sobre fundo colorido
  */
 export default function PlinLogo({ className = "h-10" }: { className?: string }) {
-  const LETTERS = ["d", "e", "s", "i", "g", "n", "s"];
+  const LETTERS = ["d", "e", "s", "i", "g", "n"];
   // Alterna entre quadrado e estrela 4 pontas
-  const shapes = ["square", "star", "square", "star", "square", "star", "square"] as const;
-  const colors = ["#F2578C", "#AD87DC", "#82CBE9", "#F2578C", "#AD87DC", "#82CBE9", "#F2578C"];
+  const shapes = ["square", "star", "square", "star", "square", "star"] as const;
+  const colors = ["#F2578C", "#AD87DC", "#82CBE9", "#F2578C", "#AD87DC", "#82CBE9"];
 
   return (
     <svg
-      viewBox="0 0 320 60"
+      viewBox="0 0 292 60"
       className={className}
       role="img"
-      aria-label="Plin Designs"
+      aria-label="Plin Design"
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
@@ -38,7 +38,7 @@ export default function PlinLogo({ className = "h-10" }: { className?: string })
         Plin
       </text>
 
-      {/* "designs" — cada letra num quadrado ou estrela */}
+      {/* "design" — cada letra num quadrado ou estrela */}
       {LETTERS.map((letter, idx) => {
         const x = 118 + idx * 29;
         const cy = 30;

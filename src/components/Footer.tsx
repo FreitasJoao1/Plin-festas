@@ -47,7 +47,9 @@ export default function Footer() {
           <div className="flex flex-col gap-3">
             <PlinLogo className="h-12 w-auto" />
             <p className="text-xs leading-relaxed text-ink-soft">
-              Especialistas em papelaria personalizada, encadernação e mimos exclusivos para tornar seus momentos inesquecíveis.
+              Especialista na fabricação de bolsas personalizadas e
+              lembrancinhas com designs exclusivos para tornar seu evento
+              ainda mais encantador.
             </p>
             <div className="flex items-center gap-3 pt-2">
               <a
@@ -86,13 +88,16 @@ export default function Footer() {
                 <Link href="/produtos" className="hover:text-pink-600">Todos os Produtos</Link>
               </li>
               <li>
-                <Link href="/produtos?categoria=agendas" className="hover:text-pink-600">Agendas e Planners</Link>
+                <Link href="/produtos?categoria=bolsas" className="hover:text-pink-600">Bolsas</Link>
               </li>
               <li>
-                <Link href="/produtos?categoria=cadernos" className="hover:text-pink-600">Cadernos Personalizados</Link>
+                <Link href="/produtos?categoria=necessaires" className="hover:text-pink-600">Necessaires e Estojos</Link>
               </li>
               <li>
-                <Link href="/produtos?categoria=festas" className="hover:text-pink-600">Kits para Festas</Link>
+                <Link href="/produtos?categoria=copos" className="hover:text-pink-600">Copos Personalizados</Link>
+              </li>
+              <li>
+                <Link href="/produtos?categoria=lembrancinhas,chaveiros" className="hover:text-pink-600">Lembrancinhas e Chaveiros</Link>
               </li>
             </ul>
           </div>
@@ -162,7 +167,7 @@ export default function Footer() {
           </div>
 
           <div className="flex items-center gap-2 text-[11px]">
-            <span>Pagamento seguro via Pix e Cartão de Crédito</span>
+            <span>Pedidos combinados diretamente pelo WhatsApp</span>
           </div>
         </div>
       </div>

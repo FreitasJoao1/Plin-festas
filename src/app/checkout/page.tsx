@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useCallback } from "react";
+import { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
@@ -8,8 +8,6 @@ import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import ShippingSelector from "@/components/ShippingSelector";
-
-const HOLD_DURATION = 2000; // ms
 
 export default function CheckoutPage() {
   const { items, subtotalCents, clear } = useCartStore();
@@ -28,12 +26,6 @@ export default function CheckoutPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Hold-to-confirm state
-  const [holdProgress, setHoldProgress] = useState(0); // 0-100
-  const [isHolding, setIsHolding] = useState(false);
-  const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-  const holdStart = useRef<number>(0);
 
   const shippingCharged = shipping.manual ? 0 : shipping.price_cents;
   const total = subtotalCents() + shippingCharged;
@@ -101,38 +93,16 @@ export default function CheckoutPage() {
     }
   }
 
-  // Botão de segurar 2s ───────────────────────────────────────────────────
-  const startHold = useCallback(() => {
+  // Confirmação instantânea ────────────────────────────────────────────────
+  const handleConfirm = useCallback(() => {
     if (loading) return;
-    holdStart.current = Date.now();
-    setIsHolding(true);
-    setHoldProgress(0);
-
-    holdInterval.current = setInterval(() => {
-      const elapsed = Date.now() - holdStart.current;
-      const pct = Math.min((elapsed / HOLD_DURATION) * 100, 100);
-      setHoldProgress(pct);
-
-      if (elapsed >= HOLD_DURATION) {
-        clearInterval(holdInterval.current!);
-        setIsHolding(false);
-        setHoldProgress(0);
-        // dispara o submit
-        submitOrder().then((order) => {
-          if (order) {
-            clear();
-            window.location.href = buildWhatsAppUrl(order);
-          }
-        });
+    submitOrder().then((order) => {
+      if (order) {
+        clear();
+        window.location.href = buildWhatsAppUrl(order);
       }
-    }, 30);
+    });
   }, [loading, name, email, phone, note, shipping, items]); // eslint-disable-line
-
-  const cancelHold = useCallback(() => {
-    if (holdInterval.current) clearInterval(holdInterval.current);
-    setIsHolding(false);
-    setHoldProgress(0);
-  }, []);
 
   if (items.length === 0) {
     return (
@@ -197,36 +167,16 @@ export default function CheckoutPage() {
           </p>
         )}
 
-        {/* BOTÃO HOLD-TO-CONFIRM */}
+        {/* BOTÃO DE CONFIRMAÇÃO */}
         <div className="flex flex-col items-center gap-2">
-          <div className="relative w-full select-none overflow-hidden rounded-full bg-green-500 shadow-lg">
-            {/* Barra de progresso */}
-            <div
-              className="absolute inset-0 rounded-full bg-green-700 transition-none"
-              style={{ width: `${holdProgress}%` }}
-            />
-            <button
-              onMouseDown={startHold}
-              onMouseUp={cancelHold}
-              onMouseLeave={cancelHold}
-              onTouchStart={startHold}
-              onTouchEnd={cancelHold}
-              disabled={loading}
-              className="relative z-10 flex w-full items-center justify-center gap-3 py-4 font-bold text-white disabled:opacity-60"
-            >
-              <MessageCircle className="h-5 w-5" />
-              {loading
-                ? "Processando…"
-                : isHolding
-                  ? "Segure para confirmar…"
-                  : `Finalizar via WhatsApp — ${formatBRL(total)}`}
-            </button>
-          </div>
-          <p className="text-center text-xs text-ink-soft">
-            {isHolding
-              ? "Continue segurando…"
-              : "Pressione e segure por 2 segundos para confirmar o pedido"}
-          </p>
+          <button
+            onClick={handleConfirm}
+            disabled={loading}
+            className="flex w-full items-center justify-center gap-3 rounded-full bg-green-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-green-600 disabled:opacity-60"
+          >
+            <MessageCircle className="h-5 w-5" />
+            {loading ? "Processando…" : `Finalizar via WhatsApp — ${formatBRL(total)}`}
+          </button>
         </div>
       </div>
 

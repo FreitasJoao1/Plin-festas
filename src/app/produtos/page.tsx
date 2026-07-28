@@ -12,20 +12,28 @@ export default async function ProdutosPage({
   searchParams: Promise<{ categoria?: string }>;
 }) {
   const { categoria } = await searchParams;
-  const category = (categoria as ProductCategory | undefined) ?? undefined;
-  const products = await getProducts({ category });
+  // Suporta uma ou várias categorias separadas por vírgula na URL
+  // (ex: ?categoria=lembrancinhas,chaveiros para o item de menu combinado).
+  const categoryList = categoria
+    ? (categoria.split(",").filter(Boolean) as ProductCategory[])
+    : undefined;
+  const products = await getProducts({ category: categoryList });
+
+  const heading = !categoryList
+    ? "Todos os produtos"
+    : categoryList.length === 1
+      ? CATEGORY_LABELS[categoryList[0]]
+      : categoryList.map((c) => CATEGORY_LABELS[c]).join(" & ");
 
   return (
     <div className="container-plin py-10">
-      <h1 className="font-display text-3xl text-ink">
-        {category ? CATEGORY_LABELS[category] : "Todos os produtos"}
-      </h1>
+      <h1 className="font-display text-3xl text-ink">{heading}</h1>
 
       <div className="mt-4 flex flex-wrap gap-2">
         <Link
           href="/produtos"
           className={`rounded-full border px-4 py-1.5 text-sm font-medium ${
-            !category
+            !categoryList
               ? "border-pink-500 bg-pink-500 text-white"
               : "border-pink-200 text-ink-soft hover:bg-pink-50"
           }`}
@@ -38,7 +46,7 @@ export default async function ProdutosPage({
               key={slug}
               href={`/produtos?categoria=${slug}`}
               className={`rounded-full border px-4 py-1.5 text-sm font-medium ${
-                category === slug
+                categoryList?.length === 1 && categoryList[0] === slug
                   ? "border-pink-500 bg-pink-500 text-white"
                   : "border-pink-200 text-ink-soft hover:bg-pink-50"
               }`}

@@ -22,13 +22,13 @@ export default async function HomePage() {
               Lauro de Freitas
             </span>
             <h1 className="mt-4 font-display text-4xl leading-tight text-ink sm:text-5xl">
-              A festa dos seus sonhos começa{" "}
-              <span className="text-pink-500">aqui</span>
+              Tudo para te encantar. 🪄🧚‍♀️
             </h1>
             <p className="mt-4 text-base text-ink-soft sm:text-lg">
-              Balões, arranjos, descartáveis e kits prontos para transformar
-              qualquer data em festa. Retire em Cabula/Tancredo Neves ou
-              receba em casa.
+              Transformamos momentos especiais em lembranças inesquecíveis.
+              Bolsas personalizadas feitas com qualidade, carinho e atenção
+              aos detalhes para surpreender seus convidados e tornar cada
+              festa ainda mais especial.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Link
@@ -36,12 +36,6 @@ export default async function HomePage() {
                 className="rounded-full bg-pink-500 px-6 py-3 font-semibold text-white shadow-sm shadow-pink-200 transition-colors hover:bg-lilac-500"
               >
                 Ver produtos
-              </Link>
-              <Link
-                href="/produtos?categoria=kits"
-                className="rounded-full border border-pink-200 bg-white px-6 py-3 font-semibold text-ink hover:bg-pink-50"
-              >
-                Kits prontos
               </Link>
             </div>
           </div>

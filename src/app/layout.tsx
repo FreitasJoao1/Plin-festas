@@ -6,13 +6,23 @@ import CartDrawer from "@/components/CartDrawer";
 import "@/app/globals.css";
 
 export const metadata: Metadata = {
-  title: "Plin Designs | Papelaria Personalizada e Mimos",
-  description: "Papelaria personalizada, agendas, planners, cadernos e mimos exclusivos para tornar seus momentos inesquecíveis.",
-  keywords: ["papelaria personalizada", "agendas", "planners", "cadernos", "mimos", "Plin Designs"],
+  title: "Plin Designs | Bolsas, Necessaires e Lembrancinhas Personalizadas",
+  description:
+    "Bolsas, necessaires, copos e lembrancinhas personalizadas para festas em Salvador e região. Feito sob medida para o seu tema.",
+  keywords: [
+    "bolsas personalizadas",
+    "necessaires personalizadas",
+    "lembrancinhas de festa",
+    "copos personalizados",
+    "chaveiros personalizados",
+    "Plin Designs",
+    "Salvador",
+  ],
   authors: [{ name: "Plin Designs" }],
   openGraph: {
-    title: "Plin Designs | Papelaria Personalizada e Mimos",
-    description: "Papelaria personalizada e mimos exclusivos.",
+    title: "Plin Designs | Bolsas, Necessaires e Lembrancinhas Personalizadas",
+    description:
+      "Bolsas, necessaires, copos e lembrancinhas personalizadas para festas em Salvador e região.",
     url: "https://plin-design-zeta.vercel.app",
     siteName: "Plin Designs",
     locale: "pt_BR",

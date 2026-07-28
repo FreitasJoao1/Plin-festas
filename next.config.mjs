@@ -11,6 +11,24 @@ const nextConfig = {
 
   // Headers de segurança aplicados a todas as rotas.
   async headers() {
+    // CSP montada por lista de domínios em vez de string solta, pra ficar
+    // óbvio o que cada origem permitida faz aqui.
+    const csp = [
+      "default-src 'self'",
+      // Next.js precisa de 'unsafe-inline' no style por causa do CSS-in-JS
+      // do App Router; 'unsafe-eval' não é necessário e fica de fora.
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https://*.supabase.co https://images.unsplash.com",
+      "font-src 'self' data:",
+      // conexões do client: Supabase (auth/db/storage/realtime) e Melhor Envio.
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://melhorenvio.com.br https://sandbox.melhorenvio.com.br",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join("; ");
+
     return [
       {
         source: "/:path*",
@@ -26,8 +44,18 @@ const nextConfig = {
           // Desativa APIs sensíveis do navegador que o site não usa.
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
           },
+          // Força HTTPS em todas as requisições futuras por 1 ano,
+          // incluindo subdomínios (a Vercel já serve HTTPS por padrão,
+          // isto impede downgrade attack para HTTP).
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
+          },
+          // Restringe de onde scripts/estilos/imagens/conexões podem vir —
+          // mitigação principal contra XSS e injeção de conteúdo externo.
+          { key: "Content-Security-Policy", value: csp },
         ],
       },
     ];
