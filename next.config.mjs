@@ -22,7 +22,7 @@ const nextConfig = {
       "img-src 'self' data: blob: https://*.supabase.co https://images.unsplash.com",
       "font-src 'self' data:",
       // conexões do client: Supabase (auth/db/storage/realtime) e Melhor Envio.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://melhorenvio.com.br https://sandbox.melhorenvio.com.br",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://melhorenvio.com.br https://sandbox.melhorenvio.com.br https://api.checkout.infinitepay.io",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

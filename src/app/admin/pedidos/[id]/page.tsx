@@ -95,6 +95,30 @@ export default async function AdminOrderDetailPage({
           </div>
         </div>
 
+        {/* Pagamento (só aparece se o cliente pagou/tentou pagar online) */}
+        {order.payment_status !== "none" && (
+          <div className="rounded-3xl border border-pink-100 bg-white p-6">
+            <h2 className="font-semibold text-ink">💳 Pagamento online</h2>
+            <div className="mt-2 grid gap-1 text-sm text-ink-soft">
+              <p>
+                <span className="font-medium text-ink">Status:</span>{" "}
+                {order.payment_status === "paid" && <span className="font-semibold text-emerald-600">✅ Pago</span>}
+                {order.payment_status === "pending" && <span className="font-semibold text-amber-600">⏳ Aguardando pagamento</span>}
+                {order.payment_status === "failed" && <span className="font-semibold text-red-600">❌ Falhou</span>}
+              </p>
+              {order.payment_method && (
+                <p><span className="font-medium text-ink">Método:</span> {order.payment_method === "pix" ? "Pix" : "Cartão de crédito"}</p>
+              )}
+              {order.infinitepay_paid_amount_cents != null && (
+                <p><span className="font-medium text-ink">Valor pago:</span> {formatBRL(order.infinitepay_paid_amount_cents)}</p>
+              )}
+              {order.infinitepay_transaction_nsu && (
+                <p className="font-mono text-xs">Transação: {order.infinitepay_transaction_nsu}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Observação */}
         {order.note && (
           <div className="rounded-3xl border border-amber-100 bg-amber-50 p-6">

@@ -38,7 +38,7 @@ export async function createClient() {
 
 /**
  * Cliente com a service_role key — só pode ser usado em código que roda
- * exclusivamente no servidor (ex: webhook do Mercado Pago), porque essa
+ * exclusivamente no servidor (ex: webhook do InfinitePay), porque essa
  * chave ignora Row Level Security. NUNCA importe isto num "use client".
  */
 export function createServiceRoleClient() {

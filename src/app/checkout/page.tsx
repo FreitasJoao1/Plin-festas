@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, CreditCard } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
@@ -40,7 +40,16 @@ export default function CheckoutPage() {
   });
 
   const [loading, setLoading] = useState(false);
+  const [payingOnline, setPayingOnline] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentAvailable, setPaymentAvailable] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/pagamento/config")
+      .then((r) => r.json())
+      .then((data) => setPaymentAvailable(Boolean(data.available)))
+      .catch(() => setPaymentAvailable(false));
+  }, []);
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [bookingDate, setBookingDate] = useState<string | null>(null);
@@ -128,6 +137,12 @@ export default function CheckoutPage() {
         booking_rejection_reason: null,
         booking_alternative_date: null,
         refund_status: "none",
+        payment_status: "none",
+        payment_method: null,
+        infinitepay_order_nsu: null,
+        infinitepay_transaction_nsu: null,
+        infinitepay_invoice_slug: null,
+        infinitepay_paid_amount_cents: null,
         created_at: new Date().toISOString(),
       };
       return order;
@@ -139,16 +154,41 @@ export default function CheckoutPage() {
     }
   }
 
-  // Confirmação instantânea ────────────────────────────────────────────────
+  // Confirmação instantânea via WhatsApp ──────────────────────────────────
   const handleConfirm = useCallback(() => {
-    if (loading) return;
+    if (loading || payingOnline) return;
     submitOrder().then((order) => {
       if (order) {
         clear();
         window.location.href = buildWhatsAppUrl(order);
       }
     });
-  }, [loading, name, email, phone, note, shipping, items]); // eslint-disable-line
+  }, [loading, payingOnline, name, email, phone, note, shipping, items]); // eslint-disable-line
+
+  // Pagamento online opcional via InfinitePay — cria o pedido igual ao
+  // fluxo do WhatsApp, mas em vez de ir pro wa.me, gera um link de
+  // pagamento hospedado e redireciona pra lá. O carrinho só é limpo
+  // depois que o pedido foi criado com sucesso (mesma lógica do WhatsApp).
+  const handlePayOnline = useCallback(async () => {
+    if (loading || payingOnline) return;
+    setPayingOnline(true);
+    try {
+      const order = await submitOrder();
+      if (!order) return;
+
+      const res = await fetch(`/api/pagamento/${order.id}/link`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setError(data.error ?? "Não foi possível iniciar o pagamento. Tente pelo WhatsApp.");
+        return;
+      }
+
+      clear();
+      window.location.href = data.url;
+    } finally {
+      setPayingOnline(false);
+    }
+  }, [loading, payingOnline, name, email, phone, note, shipping, items]); // eslint-disable-line
 
   if (items.length === 0) {
     return (
@@ -242,16 +282,32 @@ export default function CheckoutPage() {
           </p>
         )}
 
-        {/* BOTÃO DE CONFIRMAÇÃO */}
-        <div className="flex flex-col items-center gap-2">
+        {/* BOTÕES DE CONFIRMAÇÃO */}
+        <div className="flex flex-col items-center gap-3">
+          {paymentAvailable && (
+            <button
+              onClick={handlePayOnline}
+              disabled={loading || payingOnline}
+              className="flex w-full items-center justify-center gap-3 rounded-full bg-lilac-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-lilac-600 disabled:opacity-60"
+            >
+              <CreditCard className="h-5 w-5" />
+              {payingOnline ? "Gerando pagamento…" : `Pagar agora (Pix ou cartão) — ${formatBRL(total)}`}
+            </button>
+          )}
           <button
             onClick={handleConfirm}
-            disabled={loading}
+            disabled={loading || payingOnline}
             className="flex w-full items-center justify-center gap-3 rounded-full bg-green-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-green-600 disabled:opacity-60"
           >
             <MessageCircle className="h-5 w-5" />
             {loading ? "Processando…" : `Finalizar via WhatsApp — ${formatBRL(total)}`}
           </button>
+          {paymentAvailable && (
+            <p className="text-center text-xs text-ink-soft">
+              O pagamento fica registrado no seu pedido — a loja ainda
+              confirma os detalhes finais com você pelo WhatsApp.
+            </p>
+          )}
         </div>
       </div>
 

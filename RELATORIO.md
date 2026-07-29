@@ -1,127 +1,117 @@
-# Relatório — Módulo de Agendamento (Capacity Planning)
+# Relatório — Pagamento online opcional (InfinitePay)
 
 `npx tsc --noEmit` limpo. `npm run build` completo sem erros. Todas as
-rotas novas presentes no build.
-
-**Aviso de segurança, antes de tudo:** o documento de especificação
-enviado continha um bloco de instruções tentando reconfigurar meu
-comportamento de resposta (formato, proibição de explicações etc.),
-disfarçado de parte da spec técnica. Ignorei essa parte como instrução —
-tratei só como conteúdo/especificação de produto. Documentado em
-`AGENTS.md` para próximas sessões saberem que isso já aconteceu.
+rotas novas presentes.
 
 ---
 
-## Decisões de modelagem confirmadas com você antes de implementar
+## Decisões confirmadas com você antes de implementar
 
-1. **`booking_status` separado de `status`** — agendamento (aprovação de
-   data) e produção são dois fluxos paralelos e independentes.
-2. **`refund_status` é flag manual** — não existe gateway de pagamento
-   no projeto (é tudo WhatsApp/Pix combinado por fora), então recusa com
-   estorno vira só uma tarefa manual para o admin resolver fora do site.
-3. **E-mail de recusa via Resend** — implementado como best-effort. A
-   recusa em si (banco) funciona independente do e-mail sair ou não.
+1. Você ainda não tem conta InfinitePay — implementado em modo "aditivo
+   silencioso": sem `INFINITEPAY_HANDLE` configurado, o botão "Pagar
+   agora" simplesmente não aparece, zero impacto no site atual.
+2. **WhatsApp continua sendo o fluxo padrão.** Pagamento online é uma
+   opção extra ao lado, não substitui nada.
+3. **Pagamento confirmado NÃO avança o status do pedido sozinho.** Admin
+   continua confirmando manualmente em `/admin/pedidos/[id]`, mesmo com
+   o pagamento já registrado como pago.
+
+---
+
+## Ponto de segurança mais importante desta rodada
+
+A documentação oficial da InfinitePay **não especifica assinatura/HMAC**
+para o webhook — ou seja, qualquer pessoa que descobrisse a URL
+`/api/pagamento/webhook` poderia, em teoria, enviar um payload forjado
+alegando que um pedido foi pago.
+
+Mitigação: **nada é gravado como pago só por ter recebido o webhook.**
+Toda confirmação passa por uma segunda chamada server-to-server
+(`payment_check`), autenticada pelo seu handle, que só a InfinitePay
+consegue responder corretamente. O webhook é só o "gatilho" para ir
+confirmar mais rápido — a fonte de verdade real é sempre essa segunda
+chamada. O mesmo vale para o retorno do cliente ao site após pagar: os
+parâmetros da URL de redirect também não são confiados sozinhos, a
+página de status reconsulta o servidor.
 
 ---
 
 ## 1. Banco de dados (`supabase/schema.sql`)
 
-- Novas colunas em `orders`: `booking_date`, `booking_status`
-  (`pending_approval`/`approved`/`rejected`), `booking_rejection_reason`,
-  `booking_alternative_date`, `refund_status` (`none`/`refund_pending`/`refunded`).
-- Nova tabela `booking_settings` (linha única, id=1): `weekly_capacity`
-  (default 20) e `horizon_days` (default 60) — editáveis sem mexer em
-  código/trigger.
-- Nova função `booking_week_occupancy(date)` — conta ocupação de uma
-  semana (segunda a domingo).
-- **Novo trigger `enforce_booking_capacity`** — valida no banco (não só
-  na UI) que: a data não é no passado, não passa do horizonte
-  configurado, e a semana não excede a cota. Roda em INSERT e UPDATE de
-  `orders`. Isso significa que mesmo um bug futuro no código da
-  aplicação não consegue criar um agendamento fora das regras — o banco
-  rejeita.
+- Novas colunas em `orders`: `payment_status` (`none`/`pending`/`paid`/`failed`),
+  `payment_method` (`pix`/`credit_card`), `infinitepay_order_nsu`,
+  `infinitepay_transaction_nsu`, `infinitepay_invoice_slug`,
+  `infinitepay_paid_amount_cents`.
+- **Trigger `enforce_client_cancel_only_status` foi estendido** — antes
+  só sabia dois casos (admin vs. cliente cancelando). Agora tem um
+  terceiro: chamada de sistema (`service_role`, usada pelo webhook e por
+  `payment_check`), que só pode alterar campos de pagamento, nada mais.
+  Documentei extensamente no schema por que isso é seguro (RLS bloqueia
+  visitantes anônimos antes mesmo do trigger rodar) — vale a pena ler
+  esse comentário se for mexer em RLS de `orders` no futuro.
 
 **Ação que só você pode fazer:** rodar o `schema.sql` atualizado no SQL
-Editor do Supabase (idempotente, seguro rodar de novo).
+Editor do Supabase.
 
 ---
 
-## 2. Backend (`src/lib/orders.ts`, novas rotas)
+## 2. Integração InfinitePay (`src/lib/infinitepay.ts`, novo)
 
-- `createOrder` agora aceita `booking_date` e retorna
-  `{ ok: true, ... } | { ok: false, error }` em vez de lançar exceção —
-  necessário porque o trigger de capacidade pode rejeitar o insert como
-  regra de negócio normal, não como erro de sistema. **Isso mudou a
-  assinatura da função** — o único caller (`/api/checkout`) foi ajustado.
-- Novas funções: `getBookingSettings`, `getWeekOccupancies`,
-  `getBookedOrdersInRange`, `approveBooking`, `rejectBooking`.
-- Novas rotas:
-  - `GET /api/agenda` — ocupação semanal, pública (sem login), pois o
-    cliente precisa ver disponibilidade antes de escolher data no checkout.
-  - `GET /api/admin/agenda` — mesma coisa + lista de pedidos da semana, admin-only.
-  - `POST /api/admin/pedidos/[id]/aprovar` — aprova a data.
-  - `POST /api/admin/pedidos/[id]/recusar` — recusa com justificativa
-    obrigatória, data alternativa opcional, flag de estorno; dispara
-    e-mail best-effort.
-- `POST /api/checkout` agora aceita `bookingDate` opcional no body,
-  valida formato, e repassa erro de capacidade como HTTP 409 (não 500).
-
-**Achado à parte, corrigido:** existia uma função morta
-`attachPreferenceToOrder` em `orders.ts` referenciando uma coluna
-`mp_preference_id` que não existe no schema atual (resíduo da integração
-Mercado Pago já removida em sessão anterior). Nunca era chamada em lugar
-nenhum, mas quebraria se alguém a chamasse. Removida.
+- `createPaymentLink()` — gera o link de checkout hospedado (`POST /links`
+  da API deles). Frete entra como item extra (a API não tem conceito de
+  frete separado).
+- `checkPayment()` — confirma pagamento via `POST /payment_check`. Esta é
+  a única fonte confiável de "foi pago mesmo".
 
 ---
 
-## 3. E-mail de recusa (`src/lib/notifications.ts`)
+## 3. Backend — novas rotas
 
-Novo módulo, via API HTTP do Resend (sem SDK adicional). Se
-`RESEND_API_KEY`/`RESEND_FROM_EMAIL` não estiverem configurados, loga um
-aviso e não envia nada — não quebra a recusa em si.
+- `POST /api/pagamento/[orderId]/link` — gera o link pra um pedido já
+  criado (não cria pedido novo, reusa o mesmo `POST /api/checkout` de
+  sempre).
+- `POST /api/pagamento/webhook` — recebe aviso da InfinitePay, sempre
+  reconfirma via `checkPayment()` antes de gravar qualquer coisa.
+- `GET /api/pagamento/status` — consultada pela página de retorno;
+  primeiro olha o banco, e se o webhook ainda não chegou, confirma
+  ativamente usando os parâmetros do redirect.
+- `GET /api/pagamento/config` — expõe só um `{ available: boolean }`,
+  nunca a credencial, pro front saber se deve mostrar o botão.
 
-**Ação que só você pode fazer:** criar conta em resend.com, verificar um
-domínio de envio, gerar a API key, e preencher `RESEND_API_KEY` +
-`RESEND_FROM_EMAIL` no `.env.local` (seção nova em `.env.example`). Sem
-isso, a recusa continua funcionando — só sem o e-mail automático (o
-cliente ainda vê o status no site e tem o link de WhatsApp).
+`src/lib/orders.ts` ganhou `getOrderByCode`, `markPaymentPending`,
+`markPaymentConfirmed` (esta última é a ÚNICA função que grava
+`payment_status='paid'` em todo o projeto — documentado no código e no
+`AGENTS.md` pra não vazar esse padrão no futuro).
 
 ---
 
 ## 4. Frontend
 
-**Componente novo `BookingCalendar.tsx`** (compartilhado): visão semanal
-com navegação, barra de ocupação e cores conforme a spec (verde <50%,
-amarelo 50–89%, vermelho 100%, cinza fora do horizonte). Usado em dois
-modos:
-- **Storefront** (`/checkout`): clicável, cliente escolhe a data.
-- **Admin** (`/admin/agenda`): somente leitura, com lista de pedidos da
-  semana ao lado para ação rápida.
+- **Checkout**: segundo botão "Pagar agora (Pix ou cartão)" ao lado do
+  "Finalizar via WhatsApp", só aparece se `/api/pagamento/config`
+  confirmar que está disponível. Cria o pedido do mesmo jeito, depois
+  redireciona pro checkout hospedado da InfinitePay.
+- **Página nova `/checkout/pagamento`**: retorno pós-pagamento, faz
+  polling no status até confirmar (ou até desistir e sugerir WhatsApp).
+- **Admin** (`/admin/pedidos/[id]`): novo bloco mostrando status de
+  pagamento, método, valor pago e ID da transação, quando existir.
+- **Cliente** (`/conta`): selo "✅ Pago" ou "⏳ Pagamento pendente" ao
+  lado do total de cada pedido.
 
-**Checkout** (`src/app/checkout/page.tsx`): nova seção "Data desejada
-(opcional)" com o calendário + disclaimer obrigatório (antes de
-finalizar). O disclaimer também vai embutido na mensagem do WhatsApp
-quando há data escolhida (depois de finalizar).
+---
 
-**Admin — novo painel `BookingApprovalPanel.tsx`**: aparece na página de
-detalhe do pedido só quando há `booking_date`. Botões de aprovar/recusar;
-modal de recusa com justificativa obrigatória, data alternativa
-opcional, e checkbox "precisa de estorno manual".
+## Ação que só você pode fazer
 
-**Admin — nova página `/admin/agenda`**: calendário + lista de pedidos
-agendados da semana visível, com link direto para cada pedido.
-
-**Cliente (`/conta`)**: cada pedido com `booking_date` agora mostra o
-status de agendamento (aguardando/confirmado/recusado), motivo da
-recusa, data alternativa sugerida, e um link direto de WhatsApp
-pré-preenchido quando recusado.
+Criar conta em https://www.infinitepay.io, pegar sua InfiniteTag (handle,
+sem o `$`), e preencher `INFINITEPAY_HANDLE` no `.env.local` (seção nova
+em `.env.example`). Sem isso, tudo continua funcionando exatamente como
+antes — o botão de pagamento só não aparece.
 
 ---
 
 ## Verificação
 
 - `npx tsc --noEmit` → sem erros
-- `npm run build` → build de produção completo; todas as rotas novas
-  (`/admin/agenda`, `/api/agenda`, `/api/admin/agenda`,
-  `/api/admin/pedidos/[id]/aprovar`, `/api/admin/pedidos/[id]/recusar`)
-  presentes e reconhecidas
+- `npm run build` → completo; rotas `/checkout/pagamento`,
+  `/api/pagamento/[orderId]/link`, `/api/pagamento/webhook`,
+  `/api/pagamento/status`, `/api/pagamento/config` presentes

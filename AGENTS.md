@@ -10,13 +10,18 @@ agentes (como o código é organizado e por quê).
 Já existiu, em sessões anteriores, uma versão deste projeto com
 integração de pagamento via **Mercado Pago** (webhook, preferências de
 pagamento, páginas de sucesso/erro). Essa integração foi **removida
-deliberadamente** — o modelo de negócio atual é 100% checkout-via-WhatsApp,
-sem gateway de pagamento. Se você encontrar qualquer menção a Mercado
-Pago em memória de conversa anterior, documentação externa, ou pedido do
-usuário que pressuponha isso existir, trate como desatualizado e
-confirme com o usuário antes de reintroduzir qualquer coisa nessa linha.
-Não existe `mp_preference_id` funcional em uso nem rota de webhook no
-código atual.
+deliberadamente** e nunca foi reintroduzida. Se você encontrar qualquer
+menção a Mercado Pago em memória de conversa anterior, documentação
+externa, ou pedido do usuário que pressuponha isso existir, trate como
+desatualizado e confirme com o usuário antes de reintroduzir qualquer
+coisa nessa linha. Não existe `mp_preference_id` nem qualquer código de
+Mercado Pago no projeto atual.
+
+**O que existe hoje é diferente:** uma integração de pagamento opcional
+via **InfinitePay** (ver seção própria mais abaixo). Não confunda os
+dois — são gateways diferentes, com modelos de API e de confiança
+diferentes. WhatsApp continua sendo o fluxo padrão em ambos os casos;
+InfinitePay é aditivo, não substitui nada.
 
 ## Modelo mental do fluxo principal
 
@@ -98,6 +103,70 @@ de admin que ainda não existe).
 usado tanto no storefront (`/checkout`, clicável) quanto no admin
 (`/admin/agenda`, somente leitura). Se mudar o design de um, o outro
 muda junto — é intencional (spec pedia visual idêntico nos dois lados).
+
+## Pagamento online opcional (InfinitePay)
+
+O WhatsApp continua sendo a forma PADRÃO de fechar pedido — isso nunca
+muda sem confirmação explícita do usuário. InfinitePay é uma opção
+ADITIVA: no checkout, se `INFINITEPAY_HANDLE` estiver configurado, um
+segundo botão "Pagar agora" aparece ao lado do "Finalizar via WhatsApp".
+Os dois criam o mesmo pedido (`POST /api/checkout`); só o que acontece
+depois difere.
+
+**Decisão de produto confirmada com o usuário:** pagamento confirmado
+NÃO avança `status` automaticamente. `payment_status='paid'` e `status`
+são completamente independentes — o admin sempre confirma manualmente o
+andamento do pedido em `/admin/pedidos/[id]`, mesmo que o pagamento já
+tenha caído. Não mude isso sem confirmar de novo com o usuário, é uma
+decisão de negócio, não técnica.
+
+**Modelo de confiança — a parte mais importante deste módulo:** a doc
+oficial da InfinitePay não especifica assinatura/HMAC para o webhook.
+Isso significa que qualquer um que descobrir a URL
+`/api/pagamento/webhook` pode, em teoria, mandar um payload forjado
+dizendo "esse pedido foi pago". Por isso:
+- **Nenhum código grava `payment_status='paid'` direto a partir do corpo
+  do webhook ou dos query params do redirect.** Toda confirmação passa
+  por `checkPayment()` (`src/lib/infinitepay.ts`), que é uma chamada
+  server-to-server (`POST /payment_check`) autenticada pelo nosso
+  próprio `handle` — isso sim não pode ser forjado por um terceiro.
+- `markPaymentConfirmed()` (`src/lib/orders.ts`) é a ÚNICA função que
+  grava `payment_status='paid'`, e só deve ser chamada depois de
+  `checkPayment()` retornar `paid: true`. Se for adicionar um novo
+  caminho que marca pagamento como confirmado, ele PRECISA passar por
+  `checkPayment()` primeiro — não crie um atalho que confia direto no
+  que chegou de fora.
+- O trigger `enforce_client_cancel_only_status` (`supabase/schema.sql`)
+  foi estendido para permitir chamadas com `auth.uid() is null` (só
+  possível via `service_role`, usado por `markPaymentPending`/
+  `markPaymentConfirmed`) a alterar campos de pagamento. Isso é seguro
+  porque RLS roda antes do trigger — nenhuma policy libera UPDATE para
+  quem não é dono do pedido nem admin, então um `auth.uid() is null`
+  chegando ao trigger só pode vir de `service_role`, nunca de um
+  visitante anônimo com a `anon key`. Ver comentário extenso no
+  `schema.sql` antes de mexer nisso.
+
+**Fluxo completo:**
+1. Cliente clica "Pagar agora" → `submitOrder()` cria o pedido igual ao
+   fluxo WhatsApp → `POST /api/pagamento/[orderId]/link` chama
+   `createPaymentLink()`, que registra `payment_status='pending'` e
+   retorna a URL do checkout hospedado da InfinitePay.
+2. Cliente paga na InfinitePay (fora do nosso site).
+3. InfinitePay redireciona para `/checkout/pagamento?order=...&slug=...
+   &transaction_nsu=...` — essa página faz polling em
+   `GET /api/pagamento/status`, que primeiro olha o banco (atualizado
+   pelo webhook) e, se ainda não tiver chegado, chama `checkPayment()`
+   ativamente usando os parâmetros do redirect (cobre o caso do webhook
+   atrasar).
+4. Em paralelo, a InfinitePay chama `POST /api/pagamento/webhook`
+   diretamente — que também sempre reconfirma via `checkPayment()` antes
+   de gravar.
+
+**Sem conta configurada:** `isInfinitePayConfigured()` verifica só
+`INFINITEPAY_HANDLE`. Sem isso, `paymentAvailable` fica `false` no
+checkout, o botão "Pagar agora" nem aparece, e `/api/pagamento/*` recusa
+com erro claro em vez de quebrar. Isso segue o mesmo padrão de modo demo
+já usado no resto do projeto (Supabase, Melhor Envio, Resend).
 
 ## Arquitetura de autorização (ler antes de mexer em qualquer permissão)
 
@@ -195,42 +264,50 @@ src/
     admin/                painel administrativo (protegido, role=admin)
       produtos/            CRUD com upload de fotos
       pedidos/             gestão de pedidos + código PLN-DDMM-XXXX
-      agenda/               calendário semanal + lista de pedidos agendados (novo)
+      agenda/               calendário semanal + lista de pedidos agendados
     api/
       checkout/            cria o pedido (preços recalculados no servidor)
       frete/                cotação Correios via Melhor Envio
-      agenda/                GET público de ocupação semanal (novo)
+      agenda/                GET público de ocupação semanal
       pedidos/[id]/cancelar cliente cancela o próprio pedido
+      pagamento/
+        [orderId]/link/      gera link de pagamento InfinitePay (novo)
+        webhook/              recebe aviso da InfinitePay, sempre reconfirma (novo)
+        status/                consultado pela página de retorno (novo)
+        config/                 expõe só se InfinitePay está disponível (novo)
       admin/
-        agenda/              GET admin de pedidos agendados por semana (novo)
-        pedidos/[id]/aprovar aprova a data de agendamento (novo)
-        pedidos/[id]/recusar recusa a data + dispara e-mail best-effort (novo)
-    conta/                  perfil + histórico/cancelamento/status de agendamento do cliente
-    checkout/               formulário + BookingCalendar + confirmação instantânea
+        agenda/              GET admin de pedidos agendados por semana
+        pedidos/[id]/aprovar aprova a data de agendamento
+        pedidos/[id]/recusar recusa a data + dispara e-mail best-effort
+    conta/                  perfil + histórico/cancelamento/agendamento/pagamento do cliente
+    checkout/               formulário + BookingCalendar + WhatsApp + Pagar agora
+      pagamento/              página de retorno pós-checkout InfinitePay (novo)
     login/ cadastro/        autenticação
     esqueci-senha/          recuperação de senha
     redefinir-senha/        destino do link de recuperação
   components/
-    BookingCalendar.tsx      calendário semanal compartilhado storefront/admin (novo)
+    BookingCalendar.tsx      calendário semanal compartilhado storefront/admin
     admin/                  ProductForm (upload), OrderStatusForm,
-                            BookingApprovalPanel (aprovar/recusar + modal) (novo),
+                            BookingApprovalPanel (aprovar/recusar + modal),
                             DashboardCharts, RealtimeOrdersNotifier
     Header.tsx              nav + estado de sessão + isAdmin (lê profiles.role)
   lib/
-    supabase/               clients (browser, server, middleware) — padrão @supabase/ssr
-    orders.ts               CRUD de pedidos + funções de agendamento (approveBooking,
-                            rejectBooking, getWeekOccupancies, getBookedOrdersInRange)
-    notifications.ts         e-mail de recusa via Resend, best-effort (novo)
+    supabase/               clients (browser, server, middleware) — padrão @supabase/ssr;
+                            server.ts também expõe createServiceRoleClient()
+    orders.ts               CRUD de pedidos + agendamento + pagamento
+                            (markPaymentPending, markPaymentConfirmed, getOrderByCode)
+    infinitepay.ts           createPaymentLink, checkPayment — ver seção de pagamento (novo)
+    notifications.ts         e-mail de recusa via Resend, best-effort
     auth.ts                 requireAdmin() — segunda camada de proteção admin em rotas de API
     whatsapp.ts              monta a mensagem/URL wa.me do pedido (inclui data agendada)
-    order-code.ts            gera o código PLN-DDMM-XXXX
+    order-code.ts            gera o código PLN-DDMM-XXXX (também usado como order_nsu da InfinitePay)
     validate-product.ts     validação de runtime do admin
     rate-limit.ts            rate limiting básico por IP, em memória
     shipping.ts              cálculo/labels de frete (retirada, entrega própria, Uber Flash, Correios)
     melhor-envio.ts          integração real de cotação Correios
 supabase/
-  schema.sql                tabelas, RLS, triggers, Storage, seed, booking_settings +
-                            trigger enforce_booking_capacity — fonte de verdade do banco
+  schema.sql                tabelas, RLS, triggers, Storage, seed, booking_settings,
+                            colunas de pagamento InfinitePay — fonte de verdade do banco
 ```
 
 ## Convenções de código a manter

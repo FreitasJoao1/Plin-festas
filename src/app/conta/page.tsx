@@ -442,7 +442,15 @@ export default function ContaPage() {
                         )}
 
                         <div className="flex items-center justify-between pt-2 border-t">
-                          <span className="font-semibold">{formatBRL(order.total_cents)}</span>
+                          <span className="font-semibold flex items-center gap-2">
+                            {formatBRL(order.total_cents)}
+                            {order.payment_status === "paid" && (
+                              <span className="text-xs font-semibold text-emerald-600">✅ Pago</span>
+                            )}
+                            {order.payment_status === "pending" && (
+                              <span className="text-xs font-semibold text-amber-600">⏳ Pagamento pendente</span>
+                            )}
+                          </span>
 
                           {canCancel && (
                             confirmCancelId === order.id ? (

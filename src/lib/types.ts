@@ -60,6 +60,10 @@ export interface OrderItem {
   quantity: number;
 }
 
+/** Estado de um pagamento opcional via InfinitePay — 'none' quando o cliente escolheu WhatsApp em vez de pagar online. */
+export type PaymentStatus = "none" | "pending" | "paid" | "failed";
+export type PaymentMethod = "pix" | "credit_card";
+
 export interface Order {
   id: string;
   /** Código legível gerado na criação, ex: PLN-2507-A3K */
@@ -82,6 +86,12 @@ export interface Order {
   booking_rejection_reason: string | null;
   booking_alternative_date: string | null;
   refund_status: RefundStatus;
+  payment_status: PaymentStatus;
+  payment_method: PaymentMethod | null;
+  infinitepay_order_nsu: string | null;
+  infinitepay_transaction_nsu: string | null;
+  infinitepay_invoice_slug: string | null;
+  infinitepay_paid_amount_cents: number | null;
   created_at: string;
 }
 

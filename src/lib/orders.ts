@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy } from "@/lib/types";
+import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod } from "@/lib/types";
 
 export interface CreateOrderInput {
   order_code: string;
@@ -94,6 +94,77 @@ export async function getOrderById(id: string): Promise<Order | null> {
     .single();
   if (error) return null;
   return data as Order;
+}
+
+/**
+ * Busca um pedido pelo order_code (= infinitepay_order_nsu que enviamos).
+ * Usada pelo webhook/payment_check, que só recebem o NSU, não o UUID.
+ * Precisa da service_role porque roda sem sessão de usuário (chamada
+ * server-to-server pela InfinitePay).
+ */
+export async function getOrderByCode(orderCode: string): Promise<Order | null> {
+  const supabase = createServiceRoleClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("order_code", orderCode)
+    .single();
+  if (error) return null;
+  return data as Order;
+}
+
+/**
+ * Grava um pagamento InfinitePay como pendente logo após gerar o link —
+ * assim o pedido já fica rastreável mesmo se o cliente nunca completar
+ * o pagamento (permite ao admin ver "link gerado, aguardando").
+ */
+export async function markPaymentPending(
+  orderId: string,
+  orderNsu: string
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  const { error } = await supabase
+    .from("orders")
+    .update({ payment_status: "pending", infinitepay_order_nsu: orderNsu })
+    .eq("id", orderId);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+/**
+ * ÚNICA função que deve gravar payment_status='paid'. SEMPRE deve ser
+ * chamada depois de confirmar via checkPayment() (src/lib/infinitepay.ts)
+ * — nunca a partir só do corpo do webhook ou dos query params do
+ * redirect, que podem ser forjados por quem descobrir a URL.
+ *
+ * Usa service_role porque roda fora de qualquer sessão de usuário
+ * (webhook chamado pela InfinitePay, sem cookies de auth).
+ */
+export async function markPaymentConfirmed(
+  orderCode: string,
+  payment: {
+    transactionNsu: string;
+    invoiceSlug: string;
+    paidAmountCents: number;
+    method: PaymentMethod;
+  }
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = createServiceRoleClient();
+  if (!supabase) return { error: "Service role não configurada." };
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      payment_status: "paid",
+      payment_method: payment.method,
+      infinitepay_transaction_nsu: payment.transactionNsu,
+      infinitepay_invoice_slug: payment.invoiceSlug,
+      infinitepay_paid_amount_cents: payment.paidAmountCents,
+    })
+    .eq("order_code", orderCode);
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
 // ============================================================================

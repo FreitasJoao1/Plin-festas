@@ -80,13 +80,30 @@ create table if not exists public.orders (
   ),
   booking_rejection_reason text,
   booking_alternative_date date,
-  -- Sem gateway de pagamento neste projeto (checkout é 100% via WhatsApp).
-  -- refund_status é só uma flag operacional: quando a loja recusa uma data
-  -- já paga por fora (Pix combinado manualmente), isso vira uma tarefa
-  -- manual para o admin resolver o estorno fora do site.
+  -- Sem gateway de pagamento OBRIGATÓRIO neste projeto — o WhatsApp
+  -- continua sendo a forma padrão de fechar pedido. InfinitePay (abaixo)
+  -- é uma opção EXTRA de pagamento online, não substitui o WhatsApp.
+  -- refund_status é uma flag operacional: quando a loja recusa uma data
+  -- já paga (seja por fora via Pix manual, seja via InfinitePay), isso
+  -- vira uma tarefa manual para o admin resolver o estorno.
   refund_status text not null default 'none' check (
     refund_status in ('none', 'refund_pending', 'refunded')
   ),
+  -- Pagamento via InfinitePay Checkout — opcional, paralelo ao WhatsApp.
+  -- payment_status é OTIMISTA no navegador (a redirect_url do checkout já
+  -- indica sucesso) mas só vira 'paid' de verdade depois que o SERVIDOR
+  -- confirma via payment_check ou webhook (nunca confiamos só no client
+  -- dizendo "paguei"). Ver src/lib/infinitepay.ts.
+  payment_status text not null default 'none' check (
+    payment_status in ('none', 'pending', 'paid', 'failed')
+  ),
+  payment_method text check (payment_method in ('pix', 'credit_card')),
+  -- Identificadores da InfinitePay, usados para conferir o pagamento
+  -- depois (payment_check) sem confiar no que o client ou o webhook dizem.
+  infinitepay_order_nsu text,
+  infinitepay_transaction_nsu text,
+  infinitepay_invoice_slug text,
+  infinitepay_paid_amount_cents integer,
   created_at timestamptz not null default now()
 );
 
@@ -96,6 +113,8 @@ create index if not exists orders_created_at_idx on public.orders (created_at de
 create index if not exists orders_order_code_idx on public.orders (order_code);
 create index if not exists orders_booking_date_idx on public.orders (booking_date);
 create index if not exists orders_booking_status_idx on public.orders (booking_status);
+create unique index if not exists orders_infinitepay_order_nsu_idx
+  on public.orders (infinitepay_order_nsu) where infinitepay_order_nsu is not null;
 
 -- ============================================================================
 -- 2. FUNÇÃO AUXILIAR: is_admin()
@@ -218,6 +237,20 @@ create policy "orders_client_cancel"
 -- não é admin, qualquer alteração fora de "status" é rejeitada. Isso
 -- protege mesmo que alguém tente chamar o Supabase direto do navegador,
 -- pulando a rota /api/pedidos/[id]/cancelar.
+-- Chamadas com a service_role key (webhook/payment_check da InfinitePay,
+-- em src/lib/orders.ts) rodam sem sessão de usuário — auth.uid() vem
+-- NULL nesse caso, não "admin". O trigger abaixo trata isso como
+-- "sistema", e é o único caso, além de admin, que pode alterar campos de
+-- pagamento.
+--
+-- Isso é seguro porque RLS roda ANTES deste trigger: um visitante
+-- anônimo (anon key, auth.uid() também null) nunca chega até aqui, pois
+-- nenhuma policy de UPDATE em orders libera update para quem não é dono
+-- do pedido (orders_client_cancel exige auth.uid() = user_id) nem admin
+-- (orders_admin_update exige is_admin()) — sem policy que libere, o
+-- Postgres rejeita o UPDATE antes do trigger sequer rodar. A única forma
+-- de auth.uid() ser null E o UPDATE chegar até aqui é via service_role,
+-- que ignora RLS mas não este trigger.
 create or replace function public.enforce_client_cancel_only_status()
 returns trigger
 language plpgsql
@@ -226,6 +259,29 @@ set search_path = public
 as $$
 begin
   if public.is_admin() then
+    return new;
+  end if;
+
+  -- Chamada via service_role (sistema, ex: webhook de pagamento): permite
+  -- alterar SÓ os campos de pagamento, nada mais.
+  if auth.uid() is null then
+    if (
+      new.order_code, new.user_id, new.customer_name, new.customer_phone,
+      new.customer_email, new.note, new.items, new.subtotal_cents,
+      new.shipping_method, new.shipping_city, new.shipping_cents,
+      new.total_cents, new.created_at, new.status,
+      new.booking_date, new.booking_status, new.booking_rejection_reason,
+      new.booking_alternative_date, new.refund_status
+    ) is distinct from (
+      old.order_code, old.user_id, old.customer_name, old.customer_phone,
+      old.customer_email, old.note, old.items, old.subtotal_cents,
+      old.shipping_method, old.shipping_city, old.shipping_cents,
+      old.total_cents, old.created_at, old.status,
+      old.booking_date, old.booking_status, old.booking_rejection_reason,
+      old.booking_alternative_date, old.refund_status
+    ) then
+      raise exception 'Chamada de sistema só pode alterar campos de pagamento.';
+    end if;
     return new;
   end if;
 
