@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
 import {
   Search,
   Filter,
@@ -10,42 +11,50 @@ import {
   TrendingUp,
   ShoppingBag,
   RefreshCw,
-  Check,
+  MessageCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { Order, OrderStatus } from "@/lib/types";
+import { formatBRL } from "@/lib/shipping";
+import { buildCustomerWhatsAppUrl } from "@/lib/whatsapp";
+import OrderStatusBadge from "@/components/OrderStatusBadge";
 
-// Interface do Pedido
-interface Pedido {
-  id: string;
-  cliente_nome: string;
-  cliente_email: string;
-  cliente_telefone: string;
-  data: string; // ISO ou YYYY-MM-DD
-  valor_total: number;
-  status: "Pendente" | "Pago" | "Em Produção" | "Enviado" | "Concluído" | "Cancelado";
-  itens_count?: number;
-}
+// Mesmo enum de status usado no resto do projeto (OrderStatusBadge,
+// OrderStatusForm, schema.sql) — nada de valores em português criados à
+// parte, que não existem no banco.
+const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = [
+  { value: "novo", label: "🆕 Novo" },
+  { value: "confirmado", label: "✅ Confirmado" },
+  { value: "em_producao", label: "🏭 Em produção" },
+  { value: "pronto", label: "📦 Pronto" },
+  { value: "enviado", label: "🚚 Enviado" },
+  { value: "entregue", label: "🎉 Entregue" },
+  { value: "cancelado", label: "❌ Cancelado" },
+];
+
+// Pedido cancelado nunca entra em faturamento — igual ao critério já
+// usado em getOrderMetrics() (src/lib/orders.ts) para o dashboard.
+const REVENUE_STATUSES: OrderStatus[] = [
+  "confirmado", "em_producao", "pronto", "enviado", "entregue",
+];
 
 export default function AdminConsultaPedidos() {
-  const [pedidos, setPedidos] = useState<Pedido[]>([]);
+  const [pedidos, setPedidos] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  // Estados dos Filtros
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("TODOS");
   const [selectedDate, setSelectedDate] = useState<string>("");
 
   const supabase = createClient();
 
-  // 1. Carregar Pedidos do Supabase
   async function fetchPedidos() {
     setLoading(true);
     if (!supabase) {
       setLoading(false);
       return;
     }
-
     try {
       const { data, error } = await supabase
         .from("orders")
@@ -55,18 +64,7 @@ export default function AdminConsultaPedidos() {
       if (error) {
         console.error("Erro ao buscar pedidos:", error);
       } else if (data) {
-        // Mapeia os dados do Supabase para a estrutura do componente
-        const formatados: Pedido[] = data.map((item: any) => ({
-          id: item.code || item.id.substring(0, 8).toUpperCase(),
-          cliente_nome: item.customer_name || item.profiles?.full_name || "Cliente",
-          cliente_email: item.customer_email || item.profiles?.email || "Sem e-mail",
-          cliente_telefone: item.customer_phone || item.profiles?.phone || "-",
-          data: item.created_at ? item.created_at.split("T")[0] : new Date().toISOString().split("T")[0],
-          valor_total: (item.total_cents || item.total_amount || 0) / 100,
-          status: item.status || "Pendente",
-          itens_count: item.items ? (Array.isArray(item.items) ? item.items.length : 1) : 1,
-        }));
-        setPedidos(formatados);
+        setPedidos(data as Order[]);
       }
     } catch (err) {
       console.error("Erro inesperado:", err);
@@ -79,97 +77,67 @@ export default function AdminConsultaPedidos() {
     fetchPedidos();
   }, []);
 
-  // 2. Atualizar Status do Pedido no Supabase
-  async function handleStatusChange(pedidoId: string, novoStatus: string) {
-    setUpdatingId(pedidoId);
-    if (supabase) {
-      const { error } = await supabase
-        .from("orders")
-        .update({ status: novoStatus })
-        .eq("code", pedidoId);
-
-      if (error) {
-        // Tenta atualizar por ID caso o 'code' não seja a chave primária
-        await supabase
-          .from("orders")
-          .update({ status: novoStatus })
-          .eq("id", pedidoId);
+  // Atualiza status pela mesma rota /api/admin/pedidos/[id] usada na tela
+  // de detalhe do pedido (requireAdmin + updateOrderStatus) — em vez de
+  // um update direto do client, que não passa pela mesma validação.
+  async function handleStatusChange(orderId: string, novoStatus: OrderStatus) {
+    setUpdatingId(orderId);
+    try {
+      const res = await fetch(`/api/admin/pedidos/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: novoStatus }),
+      });
+      if (res.ok) {
+        setPedidos((prev) =>
+          prev.map((p) => (p.id === orderId ? { ...p, status: novoStatus } : p))
+        );
+      } else {
+        const data = await res.json().catch(() => null);
+        console.error("Erro ao atualizar status:", data?.error);
       }
+    } catch (err) {
+      console.error("Erro de conexão ao atualizar status:", err);
+    } finally {
+      setUpdatingId(null);
     }
-
-    // Atualiza estado local imediatamente
-    setPedidos((prev) =>
-      prev.map((p) =>
-        p.id === pedidoId ? { ...p, status: novoStatus as Pedido["status"] } : p
-      )
-    );
-    setUpdatingId(null);
   }
 
-  // 3. Busca em Tempo Real (Filtragem instantânea com useMemo)
   const pedidosFiltrados = useMemo(() => {
     return pedidos.filter((pedido) => {
       const term = searchTerm.trim().toLowerCase();
+      const dataISO = pedido.created_at.slice(0, 10);
+      const dataFormatada = new Date(dataISO + "T00:00:00").toLocaleDateString("pt-BR");
+      const valorStr = (pedido.total_cents / 100).toFixed(2).replace(".", ",");
 
-      const dataFormatada = new Date(pedido.data + "T00:00:00").toLocaleDateString("pt-BR");
-      const valorStr = pedido.valor_total.toFixed(2).replace(".", ",");
-      const valorRawStr = pedido.valor_total.toString();
-
-      // Busca Textual Universal
       const matchSearch =
         term === "" ||
-        pedido.id.toLowerCase().includes(term) ||
-        pedido.cliente_nome.toLowerCase().includes(term) ||
-        pedido.cliente_email.toLowerCase().includes(term) ||
-        pedido.cliente_telefone.toLowerCase().includes(term) ||
+        pedido.order_code.toLowerCase().includes(term) ||
+        pedido.customer_name.toLowerCase().includes(term) ||
+        pedido.customer_email.toLowerCase().includes(term) ||
+        pedido.customer_phone.toLowerCase().includes(term) ||
         pedido.status.toLowerCase().includes(term) ||
         dataFormatada.includes(term) ||
-        pedido.data.includes(term) ||
-        valorStr.includes(term) ||
-        valorRawStr.includes(term);
+        dataISO.includes(term) ||
+        valorStr.includes(term);
 
-      // Filtro por Status Select
-      const matchStatus =
-        selectedStatus === "TODOS" || pedido.status === selectedStatus;
-
-      // Filtro por Data
-      const matchDate =
-        selectedDate === "" || pedido.data === selectedDate;
+      const matchStatus = selectedStatus === "TODOS" || pedido.status === selectedStatus;
+      const matchDate = selectedDate === "" || dataISO === selectedDate;
 
       return matchSearch && matchStatus && matchDate;
     });
   }, [pedidos, searchTerm, selectedStatus, selectedDate]);
 
-  // Cálculos de Resumo
   const totalFaturado = useMemo(() => {
     return pedidosFiltrados
-      .filter((p) => p.status !== "Cancelado")
-      .reduce((acc, curr) => acc + curr.valor_total, 0);
+      .filter((p) => REVENUE_STATUSES.includes(p.status))
+      .reduce((acc, curr) => acc + curr.total_cents, 0);
   }, [pedidosFiltrados]);
 
   const clearFilters = () => {
     setSearchTerm("");
     setSelectedStatus("TODOS");
     setSelectedDate("");
-  };
-
-  const getStatusBadge = (status: Pedido["status"]) => {
-    switch (status) {
-      case "Pendente":
-        return "bg-amber-100 text-amber-800 border-amber-200";
-      case "Pago":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case "Em Produção":
-        return "bg-purple-100 text-purple-800 border-purple-200";
-      case "Enviado":
-        return "bg-indigo-100 text-indigo-800 border-indigo-200";
-      case "Concluído":
-        return "bg-emerald-100 text-emerald-800 border-emerald-200";
-      case "Cancelado":
-        return "bg-rose-100 text-rose-800 border-rose-200";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
-    }
   };
 
   return (
@@ -222,7 +190,10 @@ export default function AdminConsultaPedidos() {
             </div>
           </div>
           <p className="mt-2 text-2xl font-bold text-emerald-600">
-            {totalFaturado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+            {formatBRL(totalFaturado)}
+          </p>
+          <p className="mt-0.5 text-[11px] text-ink-soft">
+            Não conta pedidos cancelados nem "novo" (ainda não confirmado)
           </p>
         </div>
 
@@ -234,7 +205,7 @@ export default function AdminConsultaPedidos() {
             </div>
           </div>
           <p className="mt-2 text-2xl font-bold text-purple-600">
-            {pedidosFiltrados.filter((p) => p.status === "Pendente" || p.status === "Em Produção").length}
+            {pedidosFiltrados.filter((p) => p.status === "novo" || p.status === "em_producao").length}
           </p>
         </div>
       </div>
@@ -242,7 +213,6 @@ export default function AdminConsultaPedidos() {
       {/* Painel de Filtros e Busca */}
       <div className="rounded-2xl border border-pink-100 bg-white p-4 sm:p-6 shadow-sm space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          {/* Campo de Busca Universal */}
           <div className="relative md:col-span-6">
             <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-ink-soft">
               <Search className="h-4 w-4" />
@@ -251,7 +221,7 @@ export default function AdminConsultaPedidos() {
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Digite nome, e-mail, código (ex: PLN-1234), valor ou data..."
+              placeholder="Digite nome, e-mail, código (ex: PLN-0728-A3K), valor ou data..."
               className="w-full rounded-xl border border-pink-200 bg-pink-50/30 pl-10 pr-9 py-2.5 text-xs sm:text-sm text-ink placeholder-ink-soft/60 focus:border-pink-500 focus:bg-white focus:outline-none transition-all"
             />
             {searchTerm && (
@@ -264,7 +234,6 @@ export default function AdminConsultaPedidos() {
             )}
           </div>
 
-          {/* Filtro por Status */}
           <div className="md:col-span-3">
             <select
               value={selectedStatus}
@@ -272,16 +241,12 @@ export default function AdminConsultaPedidos() {
               className="w-full rounded-xl border border-pink-200 bg-pink-50/30 px-3 py-2.5 text-xs sm:text-sm text-ink focus:border-pink-500 focus:bg-white focus:outline-none transition-all cursor-pointer"
             >
               <option value="TODOS">Todos os Status</option>
-              <option value="Pendente">Pendente</option>
-              <option value="Pago">Pago</option>
-              <option value="Em Produção">Em Produção</option>
-              <option value="Enviado">Enviado</option>
-              <option value="Concluído">Concluído</option>
-              <option value="Cancelado">Cancelado</option>
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
             </select>
           </div>
 
-          {/* Filtro por Data */}
           <div className="relative md:col-span-3">
             <input
               type="date"
@@ -292,7 +257,6 @@ export default function AdminConsultaPedidos() {
           </div>
         </div>
 
-        {/* Tags de Filtros Ativos */}
         {(searchTerm || selectedStatus !== "TODOS" || selectedDate) && (
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-pink-100 text-xs">
             <div className="flex flex-wrap items-center gap-2 text-ink-soft">
@@ -304,7 +268,7 @@ export default function AdminConsultaPedidos() {
               )}
               {selectedStatus !== "TODOS" && (
                 <span className="rounded-lg bg-pink-100 px-2.5 py-1 text-pink-700 font-medium">
-                  {selectedStatus}
+                  {STATUS_OPTIONS.find((o) => o.value === selectedStatus)?.label ?? selectedStatus}
                 </span>
               )}
               {selectedDate && (
@@ -341,65 +305,83 @@ export default function AdminConsultaPedidos() {
                   <th className="py-3.5 px-4 font-bold">Data</th>
                   <th className="py-3.5 px-4 font-bold">Valor</th>
                   <th className="py-3.5 px-4 font-bold">Status</th>
-                  <th className="py-3.5 px-4 font-bold text-right">Alterar Status</th>
+                  <th className="py-3.5 px-4 font-bold text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-pink-100">
-                {pedidosFiltrados.map((pedido) => (
-                  <tr key={pedido.id} className="hover:bg-pink-50/30 transition-colors">
-                    {/* Código */}
-                    <td className="py-4 px-4 font-mono font-bold text-pink-600">
-                      {pedido.id}
-                    </td>
+                {pedidosFiltrados.map((pedido) => {
+                  const waUrl = pedido.customer_phone
+                    ? buildCustomerWhatsAppUrl(pedido.customer_phone)
+                    : null;
+                  return (
+                    <tr key={pedido.id} className="hover:bg-pink-50/30 transition-colors">
+                      <td className="py-4 px-4 font-mono font-bold text-pink-600">
+                        {pedido.order_code}
+                      </td>
 
-                    {/* Cliente */}
-                    <td className="py-4 px-4">
-                      <div className="font-semibold text-ink">{pedido.cliente_nome}</div>
-                      <div className="text-xs text-ink-soft">
-                        {pedido.cliente_email} {pedido.cliente_telefone !== "-" && `• ${pedido.cliente_telefone}`}
-                      </div>
-                    </td>
+                      <td className="py-4 px-4">
+                        <div className="font-semibold text-ink">{pedido.customer_name}</div>
+                        <div className="text-xs text-ink-soft">
+                          {pedido.customer_email || "Sem e-mail"}
+                          {pedido.customer_phone && ` • ${pedido.customer_phone}`}
+                        </div>
+                      </td>
 
-                    {/* Data */}
-                    <td className="py-4 px-4 whitespace-nowrap text-ink-soft">
-                      {new Date(pedido.data + "T00:00:00").toLocaleDateString("pt-BR")}
-                    </td>
+                      <td className="py-4 px-4 whitespace-nowrap text-ink-soft">
+                        {new Date(pedido.created_at).toLocaleDateString("pt-BR")}
+                      </td>
 
-                    {/* Valor */}
-                    <td className="py-4 px-4 whitespace-nowrap font-bold text-ink">
-                      {pedido.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                    </td>
+                      <td className="py-4 px-4 whitespace-nowrap font-bold text-ink">
+                        {formatBRL(pedido.total_cents)}
+                      </td>
 
-                    {/* Status Badge */}
-                    <td className="py-4 px-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${getStatusBadge(pedido.status)}`}>
-                        {pedido.status}
-                      </span>
-                    </td>
+                      <td className="py-4 px-4 whitespace-nowrap">
+                        <OrderStatusBadge status={pedido.status} />
+                      </td>
 
-                    {/* Seletor de Alteração de Status */}
-                    <td className="py-4 px-4 whitespace-nowrap text-right">
-                      <select
-                        value={pedido.status}
-                        disabled={updatingId === pedido.id}
-                        onChange={(e) => handleStatusChange(pedido.id, e.target.value)}
-                        className="rounded-xl border border-pink-200 bg-white px-2.5 py-1.5 text-xs font-medium text-ink shadow-sm focus:border-pink-500 focus:outline-none transition-all cursor-pointer hover:border-pink-300 disabled:opacity-50"
-                      >
-                        <option value="Pendente">Pendente</option>
-                        <option value="Pago">Pago</option>
-                        <option value="Em Produção">Em Produção</option>
-                        <option value="Enviado">Enviado</option>
-                        <option value="Concluído">Concluído</option>
-                        <option value="Cancelado">Cancelado</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))}
+                      <td className="py-4 px-4 whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
+                          {/* WhatsApp do CLIENTE — só aparece se o pedido tem telefone */}
+                          {waUrl && (
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Falar com o cliente no WhatsApp"
+                              className="inline-flex items-center justify-center rounded-xl border border-green-200 bg-green-50 p-2 text-green-600 transition-colors hover:bg-green-100"
+                            >
+                              <MessageCircle className="h-4 w-4" />
+                            </a>
+                          )}
+
+                          {/* Ver todos os detalhes do pedido */}
+                          <Link
+                            href={`/admin/pedidos/${pedido.id}`}
+                            title="Ver detalhes do pedido"
+                            className="inline-flex items-center justify-center rounded-xl border border-pink-200 bg-white p-2 text-pink-600 transition-colors hover:bg-pink-50"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Link>
+
+                          <select
+                            value={pedido.status}
+                            disabled={updatingId === pedido.id}
+                            onChange={(e) => handleStatusChange(pedido.id, e.target.value as OrderStatus)}
+                            className="rounded-xl border border-pink-200 bg-white px-2.5 py-1.5 text-xs font-medium text-ink shadow-sm focus:border-pink-500 focus:outline-none transition-all cursor-pointer hover:border-pink-300 disabled:opacity-50"
+                          >
+                            {STATUS_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : (
-          /* Estado Vazio */
           <div className="py-12 px-4 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-pink-100 text-pink-600 mb-3">
               <Search className="h-6 w-6" />

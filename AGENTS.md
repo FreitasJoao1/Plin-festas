@@ -256,6 +256,27 @@ novo CDN de imagem etc.) PRECISA ser adicionado à CSP em
 `next.config.mjs`, ou a chamada será bloqueada silenciosamente pelo
 navegador em produção.
 
+## Idempotência do schema.sql — cuidado ao adicionar coluna nova
+
+`create table if not exists` só cria a tabela se ela ainda não existir —
+rodar o script de novo em um banco onde `orders` já existe **não**
+adiciona colunas novas sozinho, mesmo com o comentário no topo do arquivo
+dizendo "seguro de rodar mais de uma vez". Isso já causou erro real em
+produção (`could not find the 'booking_date' column of 'orders' in the
+schema cache`) porque a tabela tinha sido criada numa versão anterior do
+schema, sem essas colunas, e reexecutar o arquivo inteiro não sincronizou
+nada.
+
+Por isso, logo após o `create table if not exists public.orders`, existe
+um bloco de `alter table ... add column if not exists ...` (+ drop/add de
+constraint) que roda sempre, independente da tabela já existir ou não. Se
+for adicionar QUALQUER coluna nova em `orders` (ou em outra tabela que já
+esteja em produção), adicione também um `alter table ... add column if
+not exists` correspondente nesse bloco — não confie só no `create table
+if not exists` para propagar a mudança num banco que já existe. O
+`notify pgrst, 'reload schema';` no final do arquivo força o Supabase a
+atualizar o cache imediatamente, em vez de esperar a detecção automática.
+
 ## Estrutura de pastas
 
 ```

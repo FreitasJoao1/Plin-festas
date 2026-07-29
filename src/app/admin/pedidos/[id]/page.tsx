@@ -5,7 +5,7 @@ import OrderStatusBadge from "@/components/OrderStatusBadge";
 import OrderStatusForm from "@/components/admin/OrderStatusForm";
 import BookingApprovalPanel from "@/components/admin/BookingApprovalPanel";
 import { MessageCircle } from "lucide-react";
-import { buildWhatsAppUrl } from "@/lib/whatsapp";
+import { buildCustomerWhatsAppUrl } from "@/lib/whatsapp";
 
 export const metadata = { title: "Detalhe do pedido — Admin Plin Designs" };
 
@@ -18,7 +18,7 @@ export default async function AdminOrderDetailPage({
   const order = await getOrderById(id);
   if (!order) notFound();
 
-  const waUrl = buildWhatsAppUrl(order);
+  const waUrl = order.customer_phone ? buildCustomerWhatsAppUrl(order.customer_phone) : null;
 
   return (
     <div className="max-w-2xl">
@@ -37,16 +37,18 @@ export default async function AdminOrderDetailPage({
         <OrderStatusBadge status={order.status} />
       </div>
 
-      {/* Botão abrir no WhatsApp */}
-      <a
-        href={waUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-4 inline-flex items-center gap-2 rounded-full bg-green-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-green-600"
-      >
-        <MessageCircle className="h-4 w-4" />
-        Abrir conversa no WhatsApp
-      </a>
+      {/* Botão abrir no WhatsApp — só aparece se o pedido tem telefone do cliente */}
+      {waUrl && (
+        <a
+          href={waUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-flex items-center gap-2 rounded-full bg-green-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-green-600"
+        >
+          <MessageCircle className="h-4 w-4" />
+          Abrir conversa no WhatsApp
+        </a>
+      )}
 
       <div className="mt-6 flex flex-col gap-4">
         {/* Cliente */}

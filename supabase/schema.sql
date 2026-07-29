@@ -107,6 +107,46 @@ create table if not exists public.orders (
   created_at timestamptz not null default now()
 );
 
+-- IMPORTANTE: "create table if not exists" acima só roda se a tabela
+-- ainda não existir — se `orders` já existia de uma versão anterior do
+-- projeto (antes de booking_date/pagamento existirem neste schema), as
+-- colunas novas NUNCA são criadas só por rodar o script de novo, mesmo
+-- que pareça "seguro de rodar mais de uma vez". O bloco abaixo corrige
+-- isso agora e protege contra o mesmo problema em qualquer coluna futura:
+-- roda sempre, independente da tabela já existir ou não, e cada linha é
+-- individualmente no-op se a coluna já existir.
+alter table public.orders add column if not exists booking_date date;
+alter table public.orders add column if not exists booking_status text not null default 'pending_approval';
+alter table public.orders add column if not exists booking_rejection_reason text;
+alter table public.orders add column if not exists booking_alternative_date date;
+alter table public.orders add column if not exists refund_status text not null default 'none';
+alter table public.orders add column if not exists payment_status text not null default 'none';
+alter table public.orders add column if not exists payment_method text;
+alter table public.orders add column if not exists infinitepay_order_nsu text;
+alter table public.orders add column if not exists infinitepay_transaction_nsu text;
+alter table public.orders add column if not exists infinitepay_invoice_slug text;
+alter table public.orders add column if not exists infinitepay_paid_amount_cents integer;
+
+-- As constraints "check" também são "if not exists" implícitas por nome,
+-- então recriamos com nome fixo + "drop if exists" antes, pelo mesmo
+-- motivo: se a coluna foi adicionada agora pelo ALTER acima, ela ainda
+-- não tem a validação de valores permitidos.
+alter table public.orders drop constraint if exists orders_booking_status_check;
+alter table public.orders add constraint orders_booking_status_check
+  check (booking_status in ('pending_approval', 'approved', 'rejected'));
+
+alter table public.orders drop constraint if exists orders_refund_status_check;
+alter table public.orders add constraint orders_refund_status_check
+  check (refund_status in ('none', 'refund_pending', 'refunded'));
+
+alter table public.orders drop constraint if exists orders_payment_status_check;
+alter table public.orders add constraint orders_payment_status_check
+  check (payment_status in ('none', 'pending', 'paid', 'failed'));
+
+alter table public.orders drop constraint if exists orders_payment_method_check;
+alter table public.orders add constraint orders_payment_method_check
+  check (payment_method is null or payment_method in ('pix', 'credit_card'));
+
 create index if not exists orders_user_id_idx on public.orders (user_id);
 create index if not exists orders_status_idx on public.orders (status);
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
@@ -521,3 +561,11 @@ end $$;
 --
 -- 3. Pronto — faça login em /login e acesse /admin.
 -- ============================================================================
+
+-- ============================================================================
+-- 10. FORÇA O POSTGREST A RECARREGAR O CACHE DE SCHEMA AGORA
+-- ============================================================================
+-- O Supabase normalmente detecta mudanças de schema sozinho, mas às vezes
+-- demora um pouco. Isso evita erros do tipo "could not find the 'x' column
+-- of 'orders' in the schema cache" logo depois de rodar este script.
+notify pgrst, 'reload schema';
