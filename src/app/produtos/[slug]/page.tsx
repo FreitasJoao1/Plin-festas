@@ -56,6 +56,15 @@ export default async function ProdutoPage({
             : "Sem estoque no momento"}
         </p>
 
+        {(product.min_order || product.min_order_value_cents) && (
+          <p className="mt-2 rounded-xl bg-lilac-50 px-3 py-2 text-sm font-medium text-lilac-700">
+            Pedido mínimo:
+            {product.min_order && ` ${product.min_order} unidades`}
+            {product.min_order && product.min_order_value_cents && " ou"}
+            {product.min_order_value_cents && ` ${formatBRL(product.min_order_value_cents)}`}
+          </p>
+        )}
+
         <ProductDetailActions product={product} />
       </div>
     </div>

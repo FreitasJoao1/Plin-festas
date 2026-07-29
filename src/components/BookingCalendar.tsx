@@ -3,18 +3,26 @@
 import { useMemo } from "react";
 import { ChevronLeft, ChevronRight, Ban } from "lucide-react";
 
-export interface DayScheduleData {
-  day: string;
-  is_open: boolean;
-  capacity_override: number | null;
-  reason?: string | null;
-}
-
 export interface WeekOccupancyData {
   week_start: string; // segunda-feira, YYYY-MM-DD
   count: number;
   capacity: number;
+  has_override?: boolean;
 }
+
+export type DayStatusValue = "available" | "limited" | "full" | "blocked";
+
+export interface DayStatusOverrideData {
+  date: string;
+  status: DayStatusValue;
+}
+
+const DAY_STATUS_OVERRIDE_COLORS: Record<DayStatusValue, { bg: string; border: string; text: string; label: string }> = {
+  available: { bg: "bg-emerald-50", border: "border-emerald-300", text: "text-emerald-700", label: "Alta disponibilidade" },
+  limited: { bg: "bg-amber-50", border: "border-amber-300", text: "text-amber-700", label: "Vagas limitadas" },
+  full: { bg: "bg-red-50", border: "border-red-300", text: "text-red-700", label: "Esgotado (manual)" },
+  blocked: { bg: "bg-gray-100", border: "border-gray-300", text: "text-gray-500", label: "Bloqueado" },
+};
 
 interface BookingCalendarProps {
   /** Ocupação por semana, já buscada da API /api/agenda. */
@@ -30,8 +38,13 @@ interface BookingCalendarProps {
   selectedDate?: string | null;
   /** Somente leitura — não permite clique mesmo com onSelectDate definido. Usado no storefront conforme a spec (3.1). */
   readOnly?: boolean;
-  /** Agendamentos de dias específicos (feriados, dias fechados, etc.) */
-  daySchedules?: DayScheduleData[];
+  /** Status manuais por dia (date -> status), sobrescreve a cor calculada pela ocupação. */
+  dayStatusOverrides?: DayStatusOverrideData[];
+  /**
+   * Modo admin: permite clicar em qualquer dia (mesmo cheio/bloqueado/passado
+   * dentro do mês corrente) para abrir o editor de status daquele dia.
+   */
+  adminMode?: boolean;
 }
 
 function addDays(dateStr: string, days: number): string {
@@ -71,7 +84,8 @@ export default function BookingCalendar({
   onSelectDate,
   selectedDate,
   readOnly = false,
-  daySchedules = [],
+  dayStatusOverrides = [],
+  adminMode = false,
 }: BookingCalendarProps) {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const maxDate = useMemo(() => addDays(today, horizonDays), [today, horizonDays]);
@@ -133,23 +147,31 @@ export default function BookingCalendar({
       {/* Grid de dias da semana */}
       <div className="mt-5 grid grid-cols-7 gap-1.5 sm:gap-2">
         {days.map((date, i) => {
-          const daySchedule = daySchedules.find(d => d.day === date);
-          const isClosed = daySchedule && !daySchedule.is_open;
           const isPast = date < today;
           const isBeyondHorizon = date > maxDate;
-          const isFull = capacity > 0 && count >= capacity;
+          const dayOverride = dayStatusOverrides.find((o) => o.date === date)?.status ?? null;
+          const isBlockedOverride = dayOverride === "full" || dayOverride === "blocked";
+          const isFull = isBlockedOverride || (capacity > 0 && count >= capacity);
           const isSelected = selectedDate === date;
-          const clickable = !readOnly && onSelectDate && !isPast && !isBeyondHorizon && !isFull && !isClosed;
+          const dayColors = dayOverride ? DAY_STATUS_OVERRIDE_COLORS[dayOverride] : colors;
+
+          // No storefront (readOnly ou sem adminMode), dia passado/fora de horizonte/cheio não é clicável.
+          // No admin, qualquer dia é clicável para abrir o editor de status, mesmo cheio/bloqueado.
+          const clickable = adminMode
+            ? !!onSelectDate
+            : !readOnly && !!onSelectDate && !isPast && !isBeyondHorizon && !isFull;
 
           let cellClasses = "flex flex-col items-center gap-1 rounded-2xl border py-3 text-xs transition-colors ";
-          if (isPast || isBeyondHorizon || isClosed) {
+          if (!adminMode && (isPast || isBeyondHorizon)) {
             cellClasses += "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed";
-          } else if (isFull) {
-            cellClasses += `${colors.border} ${colors.bg} ${colors.text} cursor-not-allowed opacity-70`;
           } else if (isSelected) {
             cellClasses += "border-pink-500 bg-pink-500 text-white shadow-md";
+          } else if (isFull) {
+            cellClasses += `${dayColors.border} ${dayColors.bg} ${dayColors.text} ${
+              clickable ? "cursor-pointer hover:scale-105 hover:shadow-md" : "cursor-not-allowed opacity-70"
+            }`;
           } else {
-            cellClasses += `${colors.border} ${colors.bg} ${colors.text} ${
+            cellClasses += `${dayColors.border} ${dayColors.bg} ${dayColors.text} ${
               clickable ? "cursor-pointer hover:scale-105 hover:shadow-md" : "cursor-default"
             }`;
           }
@@ -161,10 +183,12 @@ export default function BookingCalendar({
               disabled={!clickable}
               onClick={() => clickable && onSelectDate?.(date)}
               className={cellClasses}
+              title={dayOverride ? DAY_STATUS_OVERRIDE_COLORS[dayOverride].label : undefined}
             >
               <span className="font-semibold">{WEEKDAY_LABELS[i]}</span>
               <span className="text-[15px] font-bold">{date.slice(8, 10)}</span>
-              {(isPast || isBeyondHorizon || isClosed) && <Ban className="h-3 w-3" />}
+              {!adminMode && (isPast || isBeyondHorizon) && <Ban className="h-3 w-3" />}
+              {dayOverride === "blocked" && <Ban className="h-3 w-3" />}
             </button>
           );
         })}

@@ -82,6 +82,32 @@ export function validateProductInput(
     out.stock = b.stock;
   }
 
+  if (!partial || has("min_order")) {
+    if (b.min_order !== null && b.min_order !== undefined) {
+      if (typeof b.min_order !== "number" || !Number.isInteger(b.min_order) || b.min_order < 1 || b.min_order > 100_000) {
+        return { error: "Pedido mínimo por quantidade inválido." };
+      }
+      out.min_order = b.min_order;
+    } else {
+      out.min_order = null;
+    }
+  }
+
+  if (!partial || has("min_order_value_cents")) {
+    if (b.min_order_value_cents !== null && b.min_order_value_cents !== undefined) {
+      if (
+        typeof b.min_order_value_cents !== "number" ||
+        !Number.isInteger(b.min_order_value_cents) ||
+        b.min_order_value_cents < 1 || b.min_order_value_cents > 100_000_00
+      ) {
+        return { error: "Pedido mínimo por valor inválido." };
+      }
+      out.min_order_value_cents = b.min_order_value_cents;
+    } else {
+      out.min_order_value_cents = null;
+    }
+  }
+
   if (!partial || has("images")) {
     if (
       !Array.isArray(b.images) || b.images.length > MAX_IMAGES ||
@@ -95,46 +121,6 @@ export function validateProductInput(
   if (!partial || has("active")) {
     if (typeof b.active !== "boolean") return { error: "Campo 'active' inválido." };
     out.active = b.active;
-  }
-
-  // Pedido mínimo — OPCIONAL, e só um dos dois modos pode estar ativo por vez.
-  if (!partial || has("min_order")) {
-    if (b.min_order === null || b.min_order === undefined) {
-      out.min_order = null;
-    } else {
-      if (typeof b.min_order !== "number" || !Number.isInteger(b.min_order) || b.min_order < 1 || b.min_order > 10_000) {
-        return { error: "Pedido mínimo por quantidade inválido." };
-      }
-      out.min_order = b.min_order;
-    }
-  }
-
-  if (!partial || has("min_order_value_cents")) {
-    if (b.min_order_value_cents === null || b.min_order_value_cents === undefined) {
-      out.min_order_value_cents = null;
-    } else {
-      if (
-        typeof b.min_order_value_cents !== "number" ||
-        !Number.isInteger(b.min_order_value_cents) ||
-        b.min_order_value_cents < 1 ||
-        b.min_order_value_cents > 100_000_00
-      ) {
-        return { error: "Pedido mínimo por valor inválido." };
-      }
-      out.min_order_value_cents = b.min_order_value_cents;
-    }
-  }
-
-  if (out.min_order && out.min_order_value_cents) {
-    return { error: "Escolha pedido mínimo por quantidade OU por valor, não os dois." };
-  }
-
-  // Não faz sentido exigir mais unidades do que existe em estoque.
-  const stockToCheck = out.stock ?? (partial ? undefined : 0);
-  if (out.min_order && stockToCheck !== undefined && out.min_order > stockToCheck) {
-    return {
-      error: `Pedido mínimo (${out.min_order} un.) não pode ser maior que o estoque (${stockToCheck} un.).`,
-    };
   }
 
   return { data: out };

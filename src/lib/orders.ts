@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod, DaySchedule, SiteCustomization } from "@/lib/types";
+import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod, DayStatus, DayStatusOverride, BookingStatus } from "@/lib/types";
 
 export interface CreateOrderInput {
   order_code: string;
@@ -17,6 +17,8 @@ export interface CreateOrderInput {
   note: string | null;
   /** Data desejada pelo cliente para o evento/entrega (YYYY-MM-DD). Opcional. */
   booking_date: string | null;
+  /** Default 'pending_approval'. Pedidos lançados manualmente pelo admin (WhatsApp/presencial) entram como 'approved'. */
+  booking_status?: BookingStatus;
 }
 
 /**
@@ -55,6 +57,7 @@ export async function createOrder(
       status: "novo",
       note: input.note,
       booking_date: input.booking_date,
+      booking_status: input.booking_status ?? "pending_approval",
     })
     .select("id, order_code")
     .single();
@@ -220,6 +223,14 @@ export async function getBookingSettings(): Promise<BookingSettings> {
  * calendário (admin e cliente). Agrupa no servidor em vez de trazer todos
  * os pedidos pro client agregar — evita expor dados de outros clientes.
  */
+function mondayOf(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay(); // 0=domingo
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diffToMonday);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function getWeekOccupancies(
   startDate: string,
   endDate: string
@@ -229,31 +240,128 @@ export async function getWeekOccupancies(
 
   const settings = await getBookingSettings();
 
-  const { data, error } = await supabase
-    .from("orders")
-    .select("booking_date")
-    .not("booking_date", "is", null)
-    .gte("booking_date", startDate)
-    .lte("booking_date", endDate)
-    .in("booking_status", ["pending_approval", "approved"])
-    .neq("status", "cancelado");
+  const [{ data: orders, error: ordersError }, { data: overrides, error: overridesError }] =
+    await Promise.all([
+      supabase
+        .from("orders")
+        .select("booking_date")
+        .not("booking_date", "is", null)
+        .gte("booking_date", startDate)
+        .lte("booking_date", endDate)
+        .in("booking_status", ["pending_approval", "approved"])
+        .neq("status", "cancelado"),
+      supabase
+        .from("week_capacity_overrides")
+        .select("week_start, capacity")
+        .gte("week_start", mondayOf(startDate))
+        .lte("week_start", endDate),
+    ]);
 
-  if (error || !data) return [];
+  if (ordersError || !orders) return [];
+
+  const overrideMap = new Map<string, number>(
+    ((overrides ?? []) as { week_start: string; capacity: number }[]).map((o) => [
+      o.week_start,
+      o.capacity,
+    ])
+  );
+  if (overridesError) {
+    // Se a tabela de overrides falhar (ex: migration não rodada ainda),
+    // não derruba a agenda inteira — só ignora overrides e usa o padrão global.
+    console.error("Erro ao buscar week_capacity_overrides:", overridesError.message);
+  }
 
   const buckets = new Map<string, number>();
-  for (const row of data as { booking_date: string }[]) {
-    const d = new Date(row.booking_date + "T12:00:00");
-    // Segunda-feira da semana (getDay: 0=domingo)
-    const day = d.getDay();
-    const diffToMonday = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diffToMonday);
-    const weekStart = d.toISOString().slice(0, 10);
+  for (const row of orders as { booking_date: string }[]) {
+    const weekStart = mondayOf(row.booking_date);
     buckets.set(weekStart, (buckets.get(weekStart) ?? 0) + 1);
+  }
+  // Garante que semanas com override apareçam mesmo sem nenhum pedido ainda.
+  for (const weekStart of overrideMap.keys()) {
+    if (!buckets.has(weekStart)) buckets.set(weekStart, 0);
   }
 
   return Array.from(buckets.entries())
-    .map(([week_start, count]) => ({ week_start, count, capacity: settings.weekly_capacity }))
+    .map(([week_start, count]) => {
+      const override = overrideMap.get(week_start);
+      return {
+        week_start,
+        count,
+        capacity: override ?? settings.weekly_capacity,
+        has_override: override !== undefined,
+      };
+    })
     .sort((a, b) => a.week_start.localeCompare(b.week_start));
+}
+
+/** Lê os overrides de status de dia dentro de um intervalo, para o grid do calendário. */
+export async function getDayStatusOverrides(
+  startDate: string,
+  endDate: string
+): Promise<DayStatusOverride[]> {
+  const supabase = await createClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("day_status_overrides")
+    .select("date, status")
+    .gte("date", startDate)
+    .lte("date", endDate);
+  if (error || !data) return [];
+  return data as DayStatusOverride[];
+}
+
+/**
+ * Define ou remove a cota de uma semana específica. Passar capacity=null
+ * remove o override (volta a usar o padrão global weekly_capacity).
+ */
+export async function setWeekCapacityOverride(
+  weekStart: string,
+  capacity: number | null
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) {
+    return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  }
+  if (capacity === null) {
+    const { error } = await supabase
+      .from("week_capacity_overrides")
+      .delete()
+      .eq("week_start", weekStart);
+    if (error) return { error: error.message };
+    return { ok: true };
+  }
+  if (!Number.isInteger(capacity) || capacity <= 0) {
+    return { error: "Capacidade deve ser um número inteiro maior que zero." };
+  }
+  const { error } = await supabase
+    .from("week_capacity_overrides")
+    .upsert({ week_start: weekStart, capacity, updated_at: new Date().toISOString() });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+/**
+ * Define ou remove o status manual de um dia. Passar status=null (ou
+ * "available") remove o override e o dia volta a refletir a ocupação calculada.
+ */
+export async function setDayStatusOverride(
+  date: string,
+  status: DayStatus | null
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) {
+    return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  }
+  if (status === null || status === "available") {
+    const { error } = await supabase.from("day_status_overrides").delete().eq("date", date);
+    if (error) return { error: error.message };
+    return { ok: true };
+  }
+  const { error } = await supabase
+    .from("day_status_overrides")
+    .upsert({ date, status, updated_at: new Date().toISOString() });
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
 /** Aprova a data solicitada — o pedido segue seu fluxo normal de produção. */
@@ -419,115 +527,4 @@ export async function getOrderMetrics(): Promise<OrderMetrics> {
     dailySeries,
     topProducts,
   };
-}
-
-// ============================================================================
-// Gerenciamento de agenda por dia
-// ============================================================================
-
-export async function getDaySchedule(day: string): Promise<DaySchedule | null> {
-  const supabase = await createClient();
-  if (!supabase) return null;
-  const { data, error } = await supabase
-    .from("day_schedules")
-    .select("*")
-    .eq("day", day)
-    .maybeSingle();
-  return error || !data ? null : data;
-}
-
-export async function getDaySchedulesInRange(startDate: string, endDate: string): Promise<DaySchedule[]> {
-  const supabase = await createClient();
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("day_schedules")
-    .select("*")
-    .gte("day", startDate)
-    .lte("day", endDate)
-    .order("day", { ascending: true });
-  return error || !data ? [] : data;
-}
-
-/** Versão pública — usada no checkout (só/is_open, sem detalhes internos). */
-export async function getPublicDaySchedulesInRange(
-  startDate: string,
-  endDate: string
-): Promise<{ day: string; is_open: boolean }[]> {
-  const supabase = await createClient();
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("day_schedules")
-    .select("day, is_open")
-    .gte("day", startDate)
-    .lte("day", endDate)
-    .eq("is_open", false);
-  return error || !data ? [] : data;
-}
-
-export async function upsertDaySchedule(
-  day: string,
-  isOpen: boolean,
-  capacityOverride?: number | null,
-  reason?: string | null
-): Promise<DaySchedule | { error: string }> {
-  const supabase = await createClient();
-  if (!supabase) return { error: "Supabase não está configurado" };
-  
-  const { data, error } = await supabase
-    .from("day_schedules")
-    .upsert({
-      day,
-      is_open: isOpen,
-      capacity_override: capacityOverride ?? null,
-      reason: reason ?? null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "day" })
-    .select()
-    .single();
-  
-  return error ? { error: error.message } : data;
-}
-
-export async function deleteDaySchedule(day: string): Promise<boolean> {
-  const supabase = await createClient();
-  if (!supabase) return false;
-  const { error } = await supabase
-    .from("day_schedules")
-    .delete()
-    .eq("day", day);
-  return !error;
-}
-
-// ============================================================================
-// Customização de site
-// ============================================================================
-
-export async function getSiteCustomization(): Promise<SiteCustomization | null> {
-  const supabase = await createClient();
-  if (!supabase) return null;
-  const { data, error } = await supabase
-    .from("site_customization")
-    .select("*")
-    .eq("id", 1)
-    .single();
-  return error || !data ? null : data;
-}
-
-export async function updateSiteCustomization(
-  updates: Partial<Omit<SiteCustomization, 'id' | 'created_at' | 'updated_at'>>
-): Promise<SiteCustomization | { error: string }> {
-  const supabase = await createClient();
-  if (!supabase) return { error: "Supabase não está configurado" };
-  
-  const { data, error } = await supabase
-    .from("site_customization")
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", 1)
-    .select()
-    .single();
-  
-  return error ? { error: error.message } : data;
 }

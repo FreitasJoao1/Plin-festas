@@ -45,14 +45,9 @@ export default function ProductForm({ product }: { product?: Product }) {
       : ""
   );
   const [stock, setStock] = useState(product ? String(product.stock) : "0");
-  const [minOrderType, setMinOrderType] = useState<"none" | "quantity" | "value">(
-    product?.min_order ? "quantity" : product?.min_order_value_cents ? "value" : "none"
-  );
-  const [minOrderQty, setMinOrderQty] = useState(product?.min_order ? String(product.min_order) : "");
+  const [minOrder, setMinOrder] = useState(product?.min_order ? String(product.min_order) : "");
   const [minOrderValue, setMinOrderValue] = useState(
-    product?.min_order_value_cents
-      ? (product.min_order_value_cents / 100).toFixed(2).replace(".", ",")
-      : ""
+    product?.min_order_value_cents ? (product.min_order_value_cents / 100).toFixed(2).replace(".", ",") : ""
   );
   const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [uploading, setUploading] = useState(false);
@@ -77,27 +72,15 @@ export default function ProductForm({ product }: { product?: Product }) {
       return;
     }
 
-    let minOrder: number | null = null;
-    let minOrderValueCents: number | null = null;
-    const stockValue = Math.max(0, parseInt(stock, 10) || 0);
-    if (minOrderType === "quantity") {
-      const n = parseInt(minOrderQty, 10);
-      if (!Number.isInteger(n) || n < 1) {
-        setError("Informe uma quantidade mínima válida (ex: 2).");
-        return;
-      }
-      if (n > stockValue) {
-        setError(`Pedido mínimo (${n} un.) não pode ser maior que o estoque (${stockValue} un.).`);
-        return;
-      }
-      minOrder = n;
-    } else if (minOrderType === "value") {
-      const cents = parseMoneyToCents(minOrderValue);
-      if (cents == null || cents < 1) {
-        setError("Informe um valor mínimo válido (ex: 50,00).");
-        return;
-      }
-      minOrderValueCents = cents;
+    const minOrderParsed = minOrder.trim() === "" ? null : parseInt(minOrder, 10);
+    if (minOrderParsed !== null && (!Number.isInteger(minOrderParsed) || minOrderParsed < 1)) {
+      setError("Pedido mínimo por quantidade deve ser um número inteiro maior que zero.");
+      return;
+    }
+    const minOrderValueParsed = parseMoneyToCents(minOrderValue);
+    if (minOrderValue.trim() !== "" && minOrderValueParsed === null) {
+      setError("Pedido mínimo por valor inválido (ex: 50,00).");
+      return;
     }
 
     const payload = {
@@ -110,8 +93,8 @@ export default function ProductForm({ product }: { product?: Product }) {
       stock: Math.max(0, parseInt(stock, 10) || 0),
       images,
       active,
-      min_order: minOrder,
-      min_order_value_cents: minOrderValueCents,
+      min_order: minOrderParsed,
+      min_order_value_cents: minOrderValue.trim() === "" ? null : minOrderValueParsed,
     };
 
     setSubmitting(true);
@@ -262,6 +245,34 @@ export default function ProductForm({ product }: { product?: Product }) {
           />
         </div>
 
+        <div>
+          <label className="mb-1 block text-sm font-medium text-ink">
+            Pedido mínimo — quantidade (opcional)
+          </label>
+          <input
+            type="number"
+            min={1}
+            value={minOrder}
+            onChange={(e) => setMinOrder(e.target.value)}
+            placeholder="ex: 10"
+            className="w-full rounded-xl border border-pink-200 px-4 py-2.5 outline-none focus:border-pink-500"
+          />
+          <p className="mt-1 text-xs text-ink-soft">Mostra &quot;mín. 10&quot; no produto e bloqueia checkout abaixo disso.</p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-ink">
+            Pedido mínimo — valor R$ (opcional)
+          </label>
+          <input
+            value={minOrderValue}
+            onChange={(e) => setMinOrderValue(e.target.value)}
+            placeholder="ex: 50,00"
+            className="w-full rounded-xl border border-pink-200 px-4 py-2.5 outline-none focus:border-pink-500"
+          />
+          <p className="mt-1 text-xs text-ink-soft">Mostra &quot;mín. R$ 50,00&quot; e bloqueia checkout abaixo desse valor.</p>
+        </div>
+
         <div className="sm:col-span-2">
           <label className="mb-1 block text-sm font-medium text-ink">Fotos do produto</label>
 
@@ -320,67 +331,6 @@ export default function ProductForm({ product }: { product?: Product }) {
           <p className="mt-1.5 text-xs text-ink-soft">
             Envie fotos direto do seu computador ou celular — vão para o
             Storage do Supabase automaticamente.
-          </p>
-        </div>
-
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-sm font-medium text-ink">
-            Pedido mínimo (opcional)
-          </label>
-          <div className="flex flex-wrap gap-3 text-sm text-ink">
-            <label className="flex items-center gap-1.5">
-              <input
-                type="radio"
-                name="min_order_type"
-                checked={minOrderType === "none"}
-                onChange={() => setMinOrderType("none")}
-                className="h-4 w-4 border-pink-300 text-pink-500 focus:ring-pink-400"
-              />
-              Sem mínimo
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input
-                type="radio"
-                name="min_order_type"
-                checked={minOrderType === "quantity"}
-                onChange={() => setMinOrderType("quantity")}
-                className="h-4 w-4 border-pink-300 text-pink-500 focus:ring-pink-400"
-              />
-              Por quantidade
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input
-                type="radio"
-                name="min_order_type"
-                checked={minOrderType === "value"}
-                onChange={() => setMinOrderType("value")}
-                className="h-4 w-4 border-pink-300 text-pink-500 focus:ring-pink-400"
-              />
-              Por valor (R$)
-            </label>
-          </div>
-
-          {minOrderType === "quantity" && (
-            <input
-              type="number"
-              min={1}
-              value={minOrderQty}
-              onChange={(e) => setMinOrderQty(e.target.value)}
-              placeholder="Ex: 3 (unidades)"
-              className="mt-2 w-full max-w-[220px] rounded-xl border border-pink-200 px-4 py-2.5 outline-none focus:border-pink-500 sm:w-48"
-            />
-          )}
-          {minOrderType === "value" && (
-            <input
-              value={minOrderValue}
-              onChange={(e) => setMinOrderValue(e.target.value)}
-              placeholder="Ex: 50,00"
-              className="mt-2 w-full max-w-[220px] rounded-xl border border-pink-200 px-4 py-2.5 outline-none focus:border-pink-500 sm:w-48"
-            />
-          )}
-          <p className="mt-1.5 text-xs text-ink-soft">
-            Escolha um dos dois modos, ou deixe sem mínimo. Isso aparece pro
-            cliente na vitrine e é conferido de novo no fechamento do pedido.
           </p>
         </div>
 

@@ -8,7 +8,7 @@ import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import ShippingSelector from "@/components/ShippingSelector";
-import BookingCalendar, { WeekOccupancyData, DayScheduleData } from "@/components/BookingCalendar";
+import BookingCalendar, { WeekOccupancyData } from "@/components/BookingCalendar";
 
 function mondayOf(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
@@ -55,7 +55,6 @@ export default function CheckoutPage() {
   const [bookingDate, setBookingDate] = useState<string | null>(null);
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => mondayOf(today));
   const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
-  const [closedDays, setClosedDays] = useState<DayScheduleData[]>([]);
   const [horizonDays, setHorizonDays] = useState(60);
 
   useEffect(() => {
@@ -66,7 +65,6 @@ export default function CheckoutPage() {
       .then((data) => {
         if (data.weeks) setOccupancies(data.weeks);
         if (data.settings?.horizon_days) setHorizonDays(data.settings.horizon_days);
-        if (data.closedDays) setClosedDays(data.closedDays);
       })
       .catch(() => {
         // Se a agenda não carregar, o cliente ainda consegue finalizar
@@ -264,7 +262,6 @@ export default function CheckoutPage() {
               onNavigateWeek={handleNavigateWeek}
               onSelectDate={(date) => setBookingDate((d) => (d === date ? null : date))}
               selectedDate={bookingDate}
-              daySchedules={closedDays}
             />
           </div>
           <p className="mt-3 rounded-2xl bg-babyblue-100 px-4 py-3 text-sm text-ink">

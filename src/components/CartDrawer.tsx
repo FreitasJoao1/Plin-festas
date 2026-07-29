@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Minus, Plus, X, ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { formatBRL } from "@/lib/shipping";
-import { getMinQuantity } from "@/lib/min-order";
 
 export default function CartDrawer() {
   const { items, isOpen, close, removeItem, setQuantity, subtotalCents } =
@@ -73,8 +72,7 @@ export default function CartDrawer() {
                             setQuantity(item.product_id, item.quantity - 1)
                           }
                           aria-label="Diminuir quantidade"
-                          disabled={item.quantity <= getMinQuantity(item)}
-                          className="rounded-full border border-pink-200 p-1 hover:bg-pink-50 disabled:opacity-30"
+                          className="rounded-full border border-pink-200 p-1 hover:bg-pink-50"
                         >
                           <Minus className="h-3.5 w-3.5" />
                         </button>
@@ -98,11 +96,6 @@ export default function CartDrawer() {
                           remover
                         </button>
                       </div>
-                      {(item.min_order || item.min_order_value_cents) && (
-                        <p className="mt-1 text-[11px] text-ink-soft">
-                          Pedido mínimo: {getMinQuantity(item)} un.
-                        </p>
-                      )}
                     </div>
                   </li>
                 ))}

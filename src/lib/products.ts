@@ -124,8 +124,8 @@ export interface ProductInput {
   stock: number;
   images: string[];
   active: boolean;
-  min_order: number | null;
-  min_order_value_cents: number | null;
+  min_order?: number | null;
+  min_order_value_cents?: number | null;
 }
 
 type AdminResult<T> = { data: T; error?: undefined } | { data?: undefined; error: string };

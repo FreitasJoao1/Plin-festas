@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProductsByIds } from "@/lib/products";
-import { meetsMinOrder } from "@/lib/min-order";
 import { calculateCorreiosFreightCents } from "@/lib/melhor-envio";
 import { getShippingQuote } from "@/lib/shipping";
 import { createOrder } from "@/lib/orders";
@@ -116,11 +115,17 @@ export async function POST(req: NextRequest) {
     if (!product || !product.active) {
       return badRequest(`Produto indisponível: ${cartItem.product_id}`);
     }
-    if (!meetsMinOrder(product, cartItem.quantity)) {
+    if (product.min_order && cartItem.quantity < product.min_order) {
       return badRequest(
-        product.min_order
-          ? `"${product.name}" tem pedido mínimo de ${product.min_order} unidades.`
-          : `"${product.name}" tem pedido mínimo de ${((product.min_order_value_cents ?? 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+        `"${product.name}" tem pedido mínimo de ${product.min_order} unidades.`
+      );
+    }
+    const itemValueCents = product.price_cents * cartItem.quantity;
+    if (product.min_order_value_cents && itemValueCents < product.min_order_value_cents) {
+      return badRequest(
+        `"${product.name}" tem pedido mínimo de R$ ${(product.min_order_value_cents / 100)
+          .toFixed(2)
+          .replace(".", ",")}.`
       );
     }
     items.push({

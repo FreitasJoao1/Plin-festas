@@ -14,9 +14,9 @@ export interface Product {
   category: ProductCategory;
   price_cents: number;
   compare_at_price_cents: number | null;
-  /** Pedido mínimo de unidades (null = sem mínimo). Mutuamente exclusivo com min_order_value_cents. */
+  /** Pedido mínimo de unidades (null = sem mínimo) */
   min_order: number | null;
-  /** Pedido mínimo em valor, no carrinho, para este produto (null = sem mínimo). Mutuamente exclusivo com min_order. */
+  /** Pedido mínimo em valor, centavos (null = sem mínimo) */
   min_order_value_cents: number | null;
   stock: number;
   images: string[];
@@ -107,7 +107,34 @@ export interface WeekOccupancy {
   /** Segunda-feira da semana, formato YYYY-MM-DD */
   week_start: string;
   count: number;
+  /** Cota efetiva já resolvida (override da semana, se existir, senão o padrão global). */
   capacity: number;
+  /** true se a cota veio de um override manual, não do padrão global. */
+  has_override: boolean;
+}
+
+export type DayStatus = "available" | "limited" | "full" | "blocked";
+
+/** Sobrescrita manual de status de um dia específico, independente da ocupação calculada. */
+export interface DayStatusOverride {
+  date: string;
+  status: DayStatus;
+}
+
+/** Bloco "hero" editável da home — texto e imagem de apresentação principal. */
+export interface HomeHeroContent {
+  badge: string;
+  title: string;
+  description: string;
+  button_label: string;
+  image_url: string;
+  image_alt: string;
+}
+
+/** Um dos 3 cards de confiança no rodapé da home (só texto, ícone é fixo). */
+export interface HomeTrustCard {
+  title: string;
+  description: string;
 }
 
 export interface Profile {
@@ -115,26 +142,4 @@ export interface Profile {
   full_name: string;
   phone: string | null;
   role: "cliente" | "admin";
-}
-
-export interface DaySchedule {
-  id: string;
-  day: string;
-  is_open: boolean;
-  capacity_override: number | null;
-  reason: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SiteCustomization {
-  id: number;
-  hero_title: string | null;
-  hero_subtitle: string | null;
-  hero_image_url: string | null;
-  footer_text: string | null;
-  about_text: string | null;
-  data: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
 }

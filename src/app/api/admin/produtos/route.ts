@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
-import { createProduct, ProductInput } from "@/lib/products";
+import { createProduct, ProductInput, getAllProductsAdmin } from "@/lib/products";
 import { validateProductInput } from "@/lib/validate-product";
+
+export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+  const products = await getAllProductsAdmin();
+  return NextResponse.json({ products });
+}
 
 export async function POST(req: NextRequest) {
   const guard = await requireAdmin();

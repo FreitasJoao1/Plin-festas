@@ -40,13 +40,7 @@ create table if not exists public.products (
   compare_at_price_cents integer check (
     compare_at_price_cents is null or compare_at_price_cents >= 0
   ),
-  min_order integer check (min_order is null or min_order > 0),
-  -- Pedido mínimo por VALOR (alternativa a min_order, por quantidade).
-  -- Só um dos dois pode estar preenchido por vez — ver check abaixo e
-  -- src/lib/min-order.ts, que é a fonte única dessa regra no app.
-  min_order_value_cents integer check (min_order_value_cents is null or min_order_value_cents > 0),
-  constraint products_min_order_mutually_exclusive
-    check (min_order is null or min_order_value_cents is null),
+  min_order integer,
   stock integer not null default 99 check (stock >= 0),
   images text[] not null default '{}',
   active boolean not null default true,
@@ -54,21 +48,20 @@ create table if not exists public.products (
 );
 
 create index if not exists products_category_idx on public.products (category);
+
+-- Mínimo de pedido por VALOR (em centavos), independente do mínimo por
+-- quantidade (min_order, coluna já existente acima). Ambos são opcionais e
+-- podem coexistir no mesmo produto (ex: "mín. 10 un" E "mín. R$ 50,00").
+alter table public.products
+  add column if not exists min_order_value_cents integer
+  check (min_order_value_cents is null or min_order_value_cents >= 0);
+
+comment on column public.products.min_order is
+  'Quantidade mínima por pedido para este produto (opcional). Editável em /admin/produtos.';
+comment on column public.products.min_order_value_cents is
+  'Valor mínimo em centavos por pedido para este produto (opcional). Editável em /admin/produtos.';
 create index if not exists products_active_idx on public.products (active);
 create index if not exists products_slug_idx on public.products (slug);
-
--- Migração idempotente (roda de novo sem quebrar quem já tinha a tabela).
-alter table public.products add column if not exists min_order_value_cents integer;
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint where conname = 'products_min_order_mutually_exclusive'
-  ) then
-    alter table public.products
-      add constraint products_min_order_mutually_exclusive
-      check (min_order is null or min_order_value_cents is null);
-  end if;
-end $$;
 
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
@@ -381,53 +374,6 @@ create table if not exists public.booking_settings (
 );
 insert into public.booking_settings (id) values (1) on conflict (id) do nothing;
 
-create table if not exists public.day_schedules (
-  id uuid primary key default gen_random_uuid(),
-  day date not null unique,
-  is_open boolean not null default true,
-  capacity_override integer,
-  reason text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists day_schedules_day_idx on public.day_schedules (day);
-
-alter table public.day_schedules enable row level security;
-drop policy if exists "day_schedules_public_read" on public.day_schedules;
-create policy "day_schedules_public_read"
-  on public.day_schedules for select
-  using (true);
-drop policy if exists "day_schedules_admin_write" on public.day_schedules;
-create policy "day_schedules_admin_write"
-  on public.day_schedules for all
-  using (public.is_admin())
-  with check (public.is_admin());
-
-create table if not exists public.site_customization (
-  id integer primary key default 1 check (id = 1),
-  hero_title text,
-  hero_subtitle text,
-  hero_image_url text,
-  footer_text text,
-  about_text text,
-  data jsonb not null default '{}',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-insert into public.site_customization (id) values (1) on conflict (id) do nothing;
-
-alter table public.site_customization enable row level security;
-drop policy if exists "site_customization_public_read" on public.site_customization;
-create policy "site_customization_public_read"
-  on public.site_customization for select
-  using (true);
-drop policy if exists "site_customization_admin_write" on public.site_customization;
-create policy "site_customization_admin_write"
-  on public.site_customization for all
-  using (public.is_admin())
-  with check (public.is_admin());
-
 alter table public.booking_settings enable row level security;
 drop policy if exists "booking_settings_public_read" on public.booking_settings;
 create policy "booking_settings_public_read"
@@ -495,17 +441,6 @@ begin
     raise exception 'Data de agendamento além do horizonte máximo de % dias.', v_settings.horizon_days;
   end if;
 
-  -- Dia individualmente fechado pelo admin (feriado, manutenção, etc.)
-  -- bloqueia novo agendamento mesmo que a semana tenha vagas na cota geral.
-  if new.booking_status in ('pending_approval', 'approved') and new.status <> 'cancelado' then
-    if exists (
-      select 1 from public.day_schedules
-      where day = new.booking_date and is_open = false
-    ) then
-      raise exception 'Esta data não está disponível para agendamento.';
-    end if;
-  end if;
-
   if new.booking_status in ('pending_approval', 'approved') and new.status <> 'cancelado' then
     -- Exclui a própria linha da contagem em updates (senão um pedido
     -- já aprovado se autobloquearia ao ser salvo de novo).
@@ -531,6 +466,130 @@ drop trigger if exists orders_booking_capacity_guard on public.orders;
 create trigger orders_booking_capacity_guard
   before insert or update on public.orders
   for each row execute function public.enforce_booking_capacity();
+
+-- ============================================================================
+-- 4c. SOBRESCRITA DE AGENDA — cota por semana específica + status por dia
+-- ============================================================================
+
+-- Sobrescreve weekly_capacity só para semanas específicas (ex: semana de
+-- Natal com cota maior). Ausência de linha = usa o padrão global.
+create table if not exists public.week_capacity_overrides (
+  week_start date primary key,
+  capacity integer not null check (capacity > 0),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.week_capacity_overrides enable row level security;
+drop policy if exists "week_capacity_overrides_public_read" on public.week_capacity_overrides;
+create policy "week_capacity_overrides_public_read"
+  on public.week_capacity_overrides for select
+  using (true);
+drop policy if exists "week_capacity_overrides_admin_write" on public.week_capacity_overrides;
+create policy "week_capacity_overrides_admin_write"
+  on public.week_capacity_overrides for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Status manual de um dia específico, independente da ocupação calculada.
+-- 'available' = comportamento normal (calculado pela ocupação da semana).
+-- 'limited'   = força a aparência de "vagas limitadas" mesmo com ocupação baixa.
+-- 'full'      = força esgotado — bloqueia o dia no checkout mesmo com vaga na semana.
+-- 'blocked'   = fora de serviço (feriado, sem produção) — mesmo efeito de bloqueio que 'full'.
+create table if not exists public.day_status_overrides (
+  date date primary key,
+  status text not null check (status in ('available', 'limited', 'full', 'blocked')),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.day_status_overrides enable row level security;
+drop policy if exists "day_status_overrides_public_read" on public.day_status_overrides;
+create policy "day_status_overrides_public_read"
+  on public.day_status_overrides for select
+  using (true);
+drop policy if exists "day_status_overrides_admin_write" on public.day_status_overrides;
+create policy "day_status_overrides_admin_write"
+  on public.day_status_overrides for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Retorna a cota efetiva de uma semana: override se existir, senão o padrão global.
+create or replace function public.effective_week_capacity(p_week_start date)
+returns integer
+language sql
+stable
+as $$
+  select coalesce(
+    (select capacity from public.week_capacity_overrides where week_start = p_week_start),
+    (select weekly_capacity from public.booking_settings where id = 1)
+  );
+$$;
+
+-- Substitui a função de capacidade para também considerar cota por semana
+-- (override) e bloqueio manual do dia ('full'/'blocked' impedem o agendamento
+-- mesmo que a semana ainda tenha vaga).
+create or replace function public.enforce_booking_capacity()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_settings record;
+  v_week_start date;
+  v_effective_capacity integer;
+  v_day_status text;
+  v_occupancy integer;
+begin
+  if new.booking_date is null then
+    return new;
+  end if;
+
+  if TG_OP = 'UPDATE'
+     and new.booking_date is not distinct from old.booking_date
+     and new.booking_status is not distinct from old.booking_status
+  then
+    return new;
+  end if;
+
+  select * into v_settings from public.booking_settings where id = 1;
+
+  if new.booking_date < current_date then
+    raise exception 'Data de agendamento não pode ser no passado.';
+  end if;
+
+  if new.booking_date > current_date + v_settings.horizon_days then
+    raise exception 'Data de agendamento além do horizonte máximo de % dias.', v_settings.horizon_days;
+  end if;
+
+  if new.booking_status in ('pending_approval', 'approved') and new.status <> 'cancelado' then
+    select status into v_day_status
+    from public.day_status_overrides
+    where date = new.booking_date;
+
+    if v_day_status in ('full', 'blocked') then
+      raise exception 'Data indisponível para agendamento (bloqueada pelo administrador).';
+    end if;
+
+    v_week_start := new.booking_date - (extract(isodow from new.booking_date)::integer - 1);
+    v_effective_capacity := public.effective_week_capacity(v_week_start);
+
+    select count(*)::integer into v_occupancy
+    from public.orders
+    where booking_date is not null
+      and booking_date >= v_week_start
+      and booking_date < (v_week_start + 7)
+      and booking_status in ('pending_approval', 'approved')
+      and status <> 'cancelado'
+      and id <> coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid);
+
+    if v_occupancy >= v_effective_capacity then
+      raise exception 'Semana sem vagas disponíveis (capacidade de % pedidos atingida).', v_effective_capacity;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
 
 -- ============================================================================
 -- 5. STORAGE — bucket público para fotos dos produtos
@@ -566,6 +625,39 @@ drop policy if exists "product_images_admin_delete" on storage.objects;
 create policy "product_images_admin_delete"
   on storage.objects for delete
   using (bucket_id = 'product-images' and public.is_admin());
+
+-- Bucket separado para fotos dos blocos editáveis da home (hero etc.) —
+-- mesmas regras de acesso do bucket de produtos, mas mantido à parte para
+-- não misturar imagens de catálogo com imagens de apresentação do site.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'site-content', 'site-content', true,
+  5242880, -- 5MB
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+)
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "site_content_images_public_read" on storage.objects;
+create policy "site_content_images_public_read"
+  on storage.objects for select
+  using (bucket_id = 'site-content');
+
+drop policy if exists "site_content_images_admin_write" on storage.objects;
+create policy "site_content_images_admin_write"
+  on storage.objects for insert
+  with check (bucket_id = 'site-content' and public.is_admin());
+
+drop policy if exists "site_content_images_admin_update" on storage.objects;
+create policy "site_content_images_admin_update"
+  on storage.objects for update
+  using (bucket_id = 'site-content' and public.is_admin());
+
+drop policy if exists "site_content_images_admin_delete" on storage.objects;
+create policy "site_content_images_admin_delete"
+  on storage.objects for delete
+  using (bucket_id = 'site-content' and public.is_admin());
 
 -- ============================================================================
 -- 6. CATÁLOGO REAL — os 39 produtos do @plindesign_
@@ -612,6 +704,48 @@ values
   ('botton-58mm', 'Botton 58mm', 'Pode ser imã ou chaveiro personalizado.', 'chaveiros', 600, null, null, 99, array['https://images.unsplash.com/photo-1607082349566-187342175e2f?w=800&q=80'], true),
   ('almochaveiro-personalizado', 'Almochaveiro Personalizado', 'Personalizado.', 'chaveiros', 200, null, 20, 99, array['https://images.unsplash.com/photo-1607082349566-187342175e2f?w=800&q=80'], true)
 on conflict (slug) do nothing;
+
+-- ============================================================================
+-- 7. CONTEÚDO EDITÁVEL DA HOME (site_content) — CMS leve
+-- ============================================================================
+-- Textos e fotos de apresentação da home, editáveis em /admin/site pelo
+-- admin. Estrutura de layout/componentes continua fixa no código — só o
+-- CONTEÚDO (texto e URL de imagem) de cada bloco fica dinâmico aqui.
+create table if not exists public.site_content (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.site_content enable row level security;
+drop policy if exists "site_content_public_read" on public.site_content;
+create policy "site_content_public_read"
+  on public.site_content for select
+  using (true);
+drop policy if exists "site_content_admin_write" on public.site_content;
+create policy "site_content_admin_write"
+  on public.site_content for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Seed com o conteúdo atual da home (o admin pode sobrescrever depois em
+-- /admin/site). on conflict garante que rodar de novo não apaga edições já
+-- feitas pelo admin.
+insert into public.site_content (key, value) values
+  ('home.hero', jsonb_build_object(
+    'badge', 'Entrega em Salvador e Lauro de Freitas',
+    'title', 'Tudo para te encantar. 🪄🧚‍♀️',
+    'description', 'Transformamos momentos especiais em lembranças inesquecíveis. Bolsas personalizadas feitas com qualidade, carinho e atenção aos detalhes para surpreender seus convidados e tornar cada festa ainda mais especial.',
+    'button_label', 'Ver produtos',
+    'image_url', 'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=900&q=80',
+    'image_alt', 'Decoração de festa em tons de rosa com balões e arranjo'
+  )),
+  ('home.trust_cards', jsonb_build_array(
+    jsonb_build_object('title', 'Retire sem taxa', 'description', 'Cabula/Tancredo Neves, seg-sáb 14h-18h'),
+    jsonb_build_object('title', 'Entrega própria', 'description', 'Salvador e Lauro de Freitas, taxa fixa'),
+    jsonb_build_object('title', 'Pagamento seguro', 'description', 'Pix ou cartão via Mercado Pago')
+  ))
+on conflict (key) do nothing;
 
 -- ============================================================================
 -- 8. REALTIME — permite o painel admin ouvir pedidos novos ao vivo

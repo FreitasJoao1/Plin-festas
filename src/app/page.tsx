@@ -5,11 +5,18 @@ import Marquee from "@/components/Marquee";
 import BuntingDivider from "@/components/BuntingDivider";
 import ProductCard from "@/components/ProductCard";
 import { getFeaturedProducts } from "@/lib/products";
+import { getHomeHero, getHomeTrustCards } from "@/lib/site-content";
 import { CATEGORY_LABELS } from "@/lib/mock-data";
 import { ProductCategory } from "@/lib/types";
 
+const TRUST_ICONS = [Store, Truck, ShieldCheck];
+
 export default async function HomePage() {
-  const products = await getFeaturedProducts();
+  const [products, hero, trustCards] = await Promise.all([
+    getFeaturedProducts(),
+    getHomeHero(),
+    getHomeTrustCards(),
+  ]);
 
   return (
     <div>
@@ -18,32 +25,28 @@ export default async function HomePage() {
         <div className="container-plin grid items-center gap-8 py-14 sm:py-20 md:grid-cols-2">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-pink-600 shadow-sm">
-              <Sparkles className="h-3.5 w-3.5" /> Entrega em Salvador e
-              Lauro de Freitas
+              <Sparkles className="h-3.5 w-3.5" /> {hero.badge}
             </span>
             <h1 className="mt-4 font-display text-4xl leading-tight text-ink sm:text-5xl">
-              Tudo para te encantar. 🪄🧚‍♀️
+              {hero.title}
             </h1>
             <p className="mt-4 text-base text-ink-soft sm:text-lg">
-              Transformamos momentos especiais em lembranças inesquecíveis.
-              Bolsas personalizadas feitas com qualidade, carinho e atenção
-              aos detalhes para surpreender seus convidados e tornar cada
-              festa ainda mais especial.
+              {hero.description}
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Link
                 href="/produtos"
                 className="rounded-full bg-pink-500 px-6 py-3 font-semibold text-white shadow-sm shadow-pink-200 transition-colors hover:bg-lilac-500"
               >
-                Ver produtos
+                {hero.button_label}
               </Link>
             </div>
           </div>
 
           <div className="relative mx-auto aspect-square w-full max-w-md overflow-hidden rounded-3xl shadow-xl">
             <Image
-              src="https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=900&q=80"
-              alt="Decoração de festa em tons de rosa com balões e arranjo"
+              src={hero.image_url}
+              alt={hero.image_alt}
               fill
               priority
               sizes="(max-width: 768px) 90vw, 480px"
@@ -100,31 +103,18 @@ export default async function HomePage() {
       {/* Confiança / logística resumida */}
       <section className="bg-babyblue-100/60 py-12">
         <div className="container-plin grid gap-6 sm:grid-cols-3">
-          <div className="flex items-start gap-3">
-            <Store className="h-6 w-6 flex-shrink-0 text-pink-500" />
-            <div>
-              <p className="font-semibold text-ink">Retire sem taxa</p>
-              <p className="text-sm text-ink-soft">
-                Cabula/Tancredo Neves, seg-sáb 14h-18h
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <Truck className="h-6 w-6 flex-shrink-0 text-pink-500" />
-            <div>
-              <p className="font-semibold text-ink">Entrega própria</p>
-              <p className="text-sm text-ink-soft">
-                Salvador e Lauro de Freitas, taxa fixa
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="h-6 w-6 flex-shrink-0 text-pink-500" />
-            <div>
-              <p className="font-semibold text-ink">Pagamento seguro</p>
-              <p className="text-sm text-ink-soft">Pix ou cartão via Mercado Pago</p>
-            </div>
-          </div>
+          {trustCards.map((card, i) => {
+            const Icon = TRUST_ICONS[i] ?? Store;
+            return (
+              <div key={i} className="flex items-start gap-3">
+                <Icon className="h-6 w-6 flex-shrink-0 text-pink-500" />
+                <div>
+                  <p className="font-semibold text-ink">{card.title}</p>
+                  <p className="text-sm text-ink-soft">{card.description}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
     </div>

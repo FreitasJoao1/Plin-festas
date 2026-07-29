@@ -7,28 +7,23 @@ import { ShoppingBag, Check } from "lucide-react";
 import { Product } from "@/lib/types";
 import { formatBRL } from "@/lib/shipping";
 import { useCartStore } from "@/lib/cart-store";
-import { getMinOrderLabel, getMinQuantity } from "@/lib/min-order";
 
 export default function ProductCard({ product }: { product: Product }) {
   const addItem = useCartStore((s) => s.addItem);
   const outOfStock = product.stock <= 0;
   const [justAdded, setJustAdded] = useState(false);
-  const minOrderLabel = getMinOrderLabel(product);
 
   function handleAdd() {
-    addItem(
-      {
-        product_id: product.id,
-        slug: product.slug,
-        name: product.name,
-        price_cents: product.price_cents,
-        image: product.images[0],
-        stock: product.stock,
-        min_order: product.min_order,
-        min_order_value_cents: product.min_order_value_cents,
-      },
-      getMinQuantity(product)
-    );
+    addItem({
+      product_id: product.id,
+      slug: product.slug,
+      name: product.name,
+      price_cents: product.price_cents,
+      image: product.images[0],
+      stock: product.stock,
+      min_order: product.min_order,
+      min_order_value_cents: product.min_order_value_cents,
+    });
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1200);
   }
@@ -51,9 +46,13 @@ export default function ProductCard({ product }: { product: Product }) {
             Oferta
           </span>
         )}
-        {minOrderLabel && (
+        {(product.min_order || product.min_order_value_cents) && (
           <span className="absolute right-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-xs font-semibold text-ink-soft shadow-sm">
-            {minOrderLabel}
+            {product.min_order && product.min_order_value_cents
+              ? `mín. ${product.min_order} un / ${formatBRL(product.min_order_value_cents)}`
+              : product.min_order
+                ? `mín. ${product.min_order}`
+                : `mín. ${formatBRL(product.min_order_value_cents!)}`}
           </span>
         )}
         {outOfStock && (

@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
 
-const BUCKET = "product-images";
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const EXT_BY_TYPE: Record<string, string> = {
@@ -11,15 +10,15 @@ const EXT_BY_TYPE: Record<string, string> = {
 };
 
 /**
- * Envia uma imagem para o Supabase Storage (bucket público "product-images")
- * e retorna a URL pública. Usado no formulário de produto do admin.
- * A policy do bucket (ver supabase/schema.sql, seção 5) só permite
- * upload para quem tem role=admin — a checagem de permissão já acontece
- * no lado do banco, não só no client. Aqui validamos tamanho e tipo do
- * arquivo antes de gastar banda enviando algo inválido.
+ * Envia uma imagem para um bucket público do Supabase Storage e retorna a
+ * URL pública. As policies dos buckets (ver supabase/schema.sql) só
+ * permitem upload para quem tem role=admin — a checagem de permissão já
+ * acontece no lado do banco, não só no client. Aqui validamos tamanho e
+ * tipo do arquivo antes de gastar banda enviando algo inválido.
  */
-export async function uploadProductImage(
-  file: File
+async function uploadImage(
+  file: File,
+  bucket: string
 ): Promise<{ url: string } | { error: string }> {
   const supabase = createClient();
   if (!supabase) {
@@ -37,7 +36,7 @@ export async function uploadProductImage(
   const path = `${crypto.randomUUID()}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
-    .from(BUCKET)
+    .from(bucket)
     .upload(path, file, {
       cacheControl: "3600",
       upsert: false,
@@ -48,8 +47,18 @@ export async function uploadProductImage(
     return { error: uploadError.message };
   }
 
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
   return { url: data.publicUrl };
+}
+
+/** Envia uma imagem de produto (bucket "product-images"). Usado no formulário de produto do admin. */
+export async function uploadProductImage(file: File): Promise<{ url: string } | { error: string }> {
+  return uploadImage(file, "product-images");
+}
+
+/** Envia uma imagem de bloco editável da home (bucket "site-content"). Usado em /admin/site. */
+export async function uploadSiteContentImage(file: File): Promise<{ url: string } | { error: string }> {
+  return uploadImage(file, "site-content");
 }
 
 /** Remove uma imagem do Storage a partir da URL pública salva no produto. */
@@ -57,10 +66,10 @@ export async function deleteProductImage(url: string): Promise<void> {
   const supabase = createClient();
   if (!supabase) return;
 
-  const marker = `/object/public/${BUCKET}/`;
+  const marker = `/object/public/product-images/`;
   const idx = url.indexOf(marker);
   if (idx === -1) return; // não é uma URL do nosso bucket (ex: Unsplash demo)
 
   const path = url.slice(idx + marker.length);
-  await supabase.storage.from(BUCKET).remove([path]);
+  await supabase.storage.from("product-images").remove([path]);
 }
