@@ -14,8 +14,10 @@ export interface Product {
   category: ProductCategory;
   price_cents: number;
   compare_at_price_cents: number | null;
-  /** Pedido mínimo de unidades (null = sem mínimo) */
+  /** Pedido mínimo de unidades (null = sem mínimo). Mutuamente exclusivo com min_order_value_cents. */
   min_order: number | null;
+  /** Pedido mínimo em valor, no carrinho, para este produto (null = sem mínimo). Mutuamente exclusivo com min_order. */
+  min_order_value_cents: number | null;
   stock: number;
   images: string[];
   active: boolean;
@@ -113,4 +115,26 @@ export interface Profile {
   full_name: string;
   phone: string | null;
   role: "cliente" | "admin";
+}
+
+export interface DaySchedule {
+  id: string;
+  day: string;
+  is_open: boolean;
+  capacity_override: number | null;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiteCustomization {
+  id: number;
+  hero_title: string | null;
+  hero_subtitle: string | null;
+  hero_image_url: string | null;
+  footer_text: string | null;
+  about_text: string | null;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 }

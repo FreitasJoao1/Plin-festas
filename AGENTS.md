@@ -104,6 +104,56 @@ usado tanto no storefront (`/checkout`, clicável) quanto no admin
 (`/admin/agenda`, somente leitura). Se mudar o design de um, o outro
 muda junto — é intencional (spec pedia visual idêntico nos dois lados).
 
+**Gerenciamento por dia individual** (`day_schedules`): além da cota
+semanal global, o admin pode fechar/abrir QUALQUER dia específico (não
+só a semana toda), com um motivo opcional (feriado, manutenção, dia
+cheio manualmente). Tabela `public.day_schedules` (`day` PK única,
+`is_open`, `capacity_override` reservado para uso futuro, `reason`).
+
+- **UI admin** (`/admin/agenda`): lista os 7 dias da semana visível,
+  cada um expansível com toggle abrir/fechar + campo de motivo. Chama
+  `POST /api/admin/day-schedules` (upsert) e `DELETE
+  /api/admin/day-schedules?day=YYYY-MM-DD` (remove customização, volta
+  ao padrão aberto).
+- **Validação em camadas**, mesma filosofia da cota semanal:
+  1. UI (`BookingCalendar` com prop `daySchedules`) desabilita
+     visualmente dias fechados.
+  2. Banco: trigger `enforce_booking_capacity` já checa
+     `day_schedules.is_open = false` e rejeita o INSERT/UPDATE antes da
+     checagem de cota semanal — fonte de verdade real.
+- **Endpoint público** (`GET /api/agenda`) só expõe `day`+`is_open` dos
+  dias FECHADOS (`getPublicDaySchedulesInRange`), nunca o `reason`
+  interno — evita vazar motivo operacional (ex: "funcionária de férias")
+  pro cliente final.
+- `capacity_override` existe no schema mas ainda não tem UI/lógica —
+  reservado para o caso de querer permitir MAIS pedidos que a cota
+  padrão num dia específico, não só menos.
+
+## Customização de conteúdo do site (`site_customization`)
+
+Tela `/admin/customizacao` deixa o admin editar textos/imagens do site
+(hero, texto "sobre", rodapé) sem precisar do programador, com
+pré-visualização ao vivo antes de salvar. Tabela `public.site_customization`
+(linha única, id=1, mesmo padrão de `booking_settings`).
+
+- **Campos hoje:** `hero_title`, `hero_subtitle`, `hero_image_url`,
+  `about_text`, `footer_text`. Coluna `data jsonb` existe para expansão
+  futura sem precisar de migration.
+- **API:** `GET /api/admin/customization` (pública — o site precisa ler
+  isso pra renderizar) e `PATCH /api/admin/customization` (admin only).
+- **O que é editável aqui vs. o que NÃO é:** esta tela é só pra conteúdo
+  de apresentação (textos/imagens soltos). Produtos, categorias, preços,
+  cota de agenda, e qualquer coisa com regra de negócio ou validação de
+  banco continuam fora daqui — a tela mostra um aviso explícito disso
+  pro admin. Se pedirem pra "customizar" algo que na verdade é uma
+  entidade estruturada (produto, categoria), isso é o CRUD de produtos
+  existente, não essa tela.
+- **Pendência:** esta versão entrega o CRUD + preview; falta ainda
+  consumir `site_customization` nos componentes públicos reais
+  (`Hero`/`Footer` do storefront ainda usam texto fixo). Ao integrar,
+  busque via `getSiteCustomization()` (`src/lib/orders.ts`) com fallback
+  pro texto atual se os campos vierem `null`.
+
 ## Pagamento online opcional (InfinitePay)
 
 O WhatsApp continua sendo a forma PADRÃO de fechar pedido — isso nunca

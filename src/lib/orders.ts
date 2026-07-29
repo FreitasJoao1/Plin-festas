@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod } from "@/lib/types";
+import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod, DaySchedule, SiteCustomization } from "@/lib/types";
 
 export interface CreateOrderInput {
   order_code: string;
@@ -419,4 +419,115 @@ export async function getOrderMetrics(): Promise<OrderMetrics> {
     dailySeries,
     topProducts,
   };
+}
+
+// ============================================================================
+// Gerenciamento de agenda por dia
+// ============================================================================
+
+export async function getDaySchedule(day: string): Promise<DaySchedule | null> {
+  const supabase = await createClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("day_schedules")
+    .select("*")
+    .eq("day", day)
+    .maybeSingle();
+  return error || !data ? null : data;
+}
+
+export async function getDaySchedulesInRange(startDate: string, endDate: string): Promise<DaySchedule[]> {
+  const supabase = await createClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("day_schedules")
+    .select("*")
+    .gte("day", startDate)
+    .lte("day", endDate)
+    .order("day", { ascending: true });
+  return error || !data ? [] : data;
+}
+
+/** Versão pública — usada no checkout (só/is_open, sem detalhes internos). */
+export async function getPublicDaySchedulesInRange(
+  startDate: string,
+  endDate: string
+): Promise<{ day: string; is_open: boolean }[]> {
+  const supabase = await createClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("day_schedules")
+    .select("day, is_open")
+    .gte("day", startDate)
+    .lte("day", endDate)
+    .eq("is_open", false);
+  return error || !data ? [] : data;
+}
+
+export async function upsertDaySchedule(
+  day: string,
+  isOpen: boolean,
+  capacityOverride?: number | null,
+  reason?: string | null
+): Promise<DaySchedule | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) return { error: "Supabase não está configurado" };
+  
+  const { data, error } = await supabase
+    .from("day_schedules")
+    .upsert({
+      day,
+      is_open: isOpen,
+      capacity_override: capacityOverride ?? null,
+      reason: reason ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "day" })
+    .select()
+    .single();
+  
+  return error ? { error: error.message } : data;
+}
+
+export async function deleteDaySchedule(day: string): Promise<boolean> {
+  const supabase = await createClient();
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("day_schedules")
+    .delete()
+    .eq("day", day);
+  return !error;
+}
+
+// ============================================================================
+// Customização de site
+// ============================================================================
+
+export async function getSiteCustomization(): Promise<SiteCustomization | null> {
+  const supabase = await createClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("site_customization")
+    .select("*")
+    .eq("id", 1)
+    .single();
+  return error || !data ? null : data;
+}
+
+export async function updateSiteCustomization(
+  updates: Partial<Omit<SiteCustomization, 'id' | 'created_at' | 'updated_at'>>
+): Promise<SiteCustomization | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) return { error: "Supabase não está configurado" };
+  
+  const { data, error } = await supabase
+    .from("site_customization")
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1)
+    .select()
+    .single();
+  
+  return error ? { error: error.message } : data;
 }

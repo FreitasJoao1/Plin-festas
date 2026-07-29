@@ -11,6 +11,17 @@ export interface CartItem {
   image: string;
   quantity: number;
   stock: number;
+  /** Pedido mínimo do produto (copiado no momento de adicionar ao carrinho). */
+  min_order: number | null;
+  min_order_value_cents: number | null;
+}
+
+function minQtyFor(item: Pick<CartItem, "min_order" | "min_order_value_cents" | "price_cents">): number {
+  if (item.min_order && item.min_order > 0) return item.min_order;
+  if (item.min_order_value_cents && item.price_cents > 0) {
+    return Math.ceil(item.min_order_value_cents / item.price_cents);
+  }
+  return 1;
 }
 
 interface CartState {
@@ -34,12 +45,14 @@ export const useCartStore = create<CartState>()(
 
       addItem: (item, quantity = 1) => {
         set((state) => {
+          const minQty = minQtyFor(item);
+          const requestedQty = Math.max(quantity, minQty);
           const existing = state.items.find(
             (i) => i.product_id === item.product_id
           );
           if (existing) {
             const nextQty = Math.min(
-              existing.quantity + quantity,
+              existing.quantity + requestedQty,
               existing.stock
             );
             return {
@@ -54,7 +67,7 @@ export const useCartStore = create<CartState>()(
           return {
             items: [
               ...state.items,
-              { ...item, quantity: Math.min(quantity, item.stock) },
+              { ...item, quantity: Math.min(requestedQty, item.stock) },
             ],
             isOpen: true,
           };
@@ -71,7 +84,7 @@ export const useCartStore = create<CartState>()(
           items: state.items
             .map((i) =>
               i.product_id === productId
-                ? { ...i, quantity: Math.max(1, Math.min(quantity, i.stock)) }
+                ? { ...i, quantity: Math.max(minQtyFor(i), Math.min(quantity, i.stock)) }
                 : i
             )
             .filter((i) => i.quantity > 0),

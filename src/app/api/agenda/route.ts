@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getWeekOccupancies, getBookingSettings } from "@/lib/orders";
+import { getWeekOccupancies, getBookingSettings, getPublicDaySchedulesInRange } from "@/lib/orders";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -26,10 +26,11 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const [settings, weeks] = await Promise.all([
+  const [settings, weeks, closedDays] = await Promise.all([
     getBookingSettings(),
     getWeekOccupancies(start, end),
+    getPublicDaySchedulesInRange(start, end),
   ]);
 
-  return NextResponse.json({ settings, weeks });
+  return NextResponse.json({ settings, weeks, closedDays });
 }

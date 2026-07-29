@@ -3,6 +3,13 @@
 import { useMemo } from "react";
 import { ChevronLeft, ChevronRight, Ban } from "lucide-react";
 
+export interface DayScheduleData {
+  day: string;
+  is_open: boolean;
+  capacity_override: number | null;
+  reason?: string | null;
+}
+
 export interface WeekOccupancyData {
   week_start: string; // segunda-feira, YYYY-MM-DD
   count: number;
@@ -23,6 +30,8 @@ interface BookingCalendarProps {
   selectedDate?: string | null;
   /** Somente leitura — não permite clique mesmo com onSelectDate definido. Usado no storefront conforme a spec (3.1). */
   readOnly?: boolean;
+  /** Agendamentos de dias específicos (feriados, dias fechados, etc.) */
+  daySchedules?: DayScheduleData[];
 }
 
 function addDays(dateStr: string, days: number): string {
@@ -62,6 +71,7 @@ export default function BookingCalendar({
   onSelectDate,
   selectedDate,
   readOnly = false,
+  daySchedules = [],
 }: BookingCalendarProps) {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const maxDate = useMemo(() => addDays(today, horizonDays), [today, horizonDays]);
@@ -123,14 +133,16 @@ export default function BookingCalendar({
       {/* Grid de dias da semana */}
       <div className="mt-5 grid grid-cols-7 gap-1.5 sm:gap-2">
         {days.map((date, i) => {
+          const daySchedule = daySchedules.find(d => d.day === date);
+          const isClosed = daySchedule && !daySchedule.is_open;
           const isPast = date < today;
           const isBeyondHorizon = date > maxDate;
           const isFull = capacity > 0 && count >= capacity;
           const isSelected = selectedDate === date;
-          const clickable = !readOnly && onSelectDate && !isPast && !isBeyondHorizon && !isFull;
+          const clickable = !readOnly && onSelectDate && !isPast && !isBeyondHorizon && !isFull && !isClosed;
 
           let cellClasses = "flex flex-col items-center gap-1 rounded-2xl border py-3 text-xs transition-colors ";
-          if (isPast || isBeyondHorizon) {
+          if (isPast || isBeyondHorizon || isClosed) {
             cellClasses += "border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed";
           } else if (isFull) {
             cellClasses += `${colors.border} ${colors.bg} ${colors.text} cursor-not-allowed opacity-70`;
@@ -152,7 +164,7 @@ export default function BookingCalendar({
             >
               <span className="font-semibold">{WEEKDAY_LABELS[i]}</span>
               <span className="text-[15px] font-bold">{date.slice(8, 10)}</span>
-              {(isPast || isBeyondHorizon) && <Ban className="h-3 w-3" />}
+              {(isPast || isBeyondHorizon || isClosed) && <Ban className="h-3 w-3" />}
             </button>
           );
         })}

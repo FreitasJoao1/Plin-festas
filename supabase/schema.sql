@@ -40,7 +40,13 @@ create table if not exists public.products (
   compare_at_price_cents integer check (
     compare_at_price_cents is null or compare_at_price_cents >= 0
   ),
-  min_order integer,
+  min_order integer check (min_order is null or min_order > 0),
+  -- Pedido mínimo por VALOR (alternativa a min_order, por quantidade).
+  -- Só um dos dois pode estar preenchido por vez — ver check abaixo e
+  -- src/lib/min-order.ts, que é a fonte única dessa regra no app.
+  min_order_value_cents integer check (min_order_value_cents is null or min_order_value_cents > 0),
+  constraint products_min_order_mutually_exclusive
+    check (min_order is null or min_order_value_cents is null),
   stock integer not null default 99 check (stock >= 0),
   images text[] not null default '{}',
   active boolean not null default true,
@@ -50,6 +56,19 @@ create table if not exists public.products (
 create index if not exists products_category_idx on public.products (category);
 create index if not exists products_active_idx on public.products (active);
 create index if not exists products_slug_idx on public.products (slug);
+
+-- Migração idempotente (roda de novo sem quebrar quem já tinha a tabela).
+alter table public.products add column if not exists min_order_value_cents integer;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'products_min_order_mutually_exclusive'
+  ) then
+    alter table public.products
+      add constraint products_min_order_mutually_exclusive
+      check (min_order is null or min_order_value_cents is null);
+  end if;
+end $$;
 
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
@@ -362,6 +381,53 @@ create table if not exists public.booking_settings (
 );
 insert into public.booking_settings (id) values (1) on conflict (id) do nothing;
 
+create table if not exists public.day_schedules (
+  id uuid primary key default gen_random_uuid(),
+  day date not null unique,
+  is_open boolean not null default true,
+  capacity_override integer,
+  reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists day_schedules_day_idx on public.day_schedules (day);
+
+alter table public.day_schedules enable row level security;
+drop policy if exists "day_schedules_public_read" on public.day_schedules;
+create policy "day_schedules_public_read"
+  on public.day_schedules for select
+  using (true);
+drop policy if exists "day_schedules_admin_write" on public.day_schedules;
+create policy "day_schedules_admin_write"
+  on public.day_schedules for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+create table if not exists public.site_customization (
+  id integer primary key default 1 check (id = 1),
+  hero_title text,
+  hero_subtitle text,
+  hero_image_url text,
+  footer_text text,
+  about_text text,
+  data jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+insert into public.site_customization (id) values (1) on conflict (id) do nothing;
+
+alter table public.site_customization enable row level security;
+drop policy if exists "site_customization_public_read" on public.site_customization;
+create policy "site_customization_public_read"
+  on public.site_customization for select
+  using (true);
+drop policy if exists "site_customization_admin_write" on public.site_customization;
+create policy "site_customization_admin_write"
+  on public.site_customization for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
 alter table public.booking_settings enable row level security;
 drop policy if exists "booking_settings_public_read" on public.booking_settings;
 create policy "booking_settings_public_read"
@@ -427,6 +493,17 @@ begin
 
   if new.booking_date > current_date + v_settings.horizon_days then
     raise exception 'Data de agendamento além do horizonte máximo de % dias.', v_settings.horizon_days;
+  end if;
+
+  -- Dia individualmente fechado pelo admin (feriado, manutenção, etc.)
+  -- bloqueia novo agendamento mesmo que a semana tenha vagas na cota geral.
+  if new.booking_status in ('pending_approval', 'approved') and new.status <> 'cancelado' then
+    if exists (
+      select 1 from public.day_schedules
+      where day = new.booking_date and is_open = false
+    ) then
+      raise exception 'Esta data não está disponível para agendamento.';
+    end if;
   end if;
 
   if new.booking_status in ('pending_approval', 'approved') and new.status <> 'cancelado' then
