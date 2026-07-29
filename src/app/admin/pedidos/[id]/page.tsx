@@ -3,6 +3,7 @@ import { getOrderById } from "@/lib/orders";
 import { formatBRL, SHIPPING_METHOD_LABELS, DELIVERY_CITY_LABELS } from "@/lib/shipping";
 import OrderStatusBadge from "@/components/OrderStatusBadge";
 import OrderStatusForm from "@/components/admin/OrderStatusForm";
+import BookingApprovalPanel from "@/components/admin/BookingApprovalPanel";
 import { MessageCircle } from "lucide-react";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
@@ -101,6 +102,9 @@ export default async function AdminOrderDetailPage({
             <p className="mt-2 text-sm text-ink-soft">{order.note}</p>
           </div>
         )}
+
+        {/* Agendamento (só aparece se o cliente escolheu uma data) */}
+        <BookingApprovalPanel order={order} />
 
         {/* Status */}
         <div className="rounded-3xl border border-pink-100 bg-white p-6">

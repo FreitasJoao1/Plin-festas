@@ -70,6 +70,23 @@ create table if not exists public.orders (
   status text not null default 'novo' check (
     status in ('novo', 'confirmado', 'em_producao', 'pronto', 'enviado', 'entregue', 'cancelado')
   ),
+  -- Módulo de agendamento (capacity planning) — independente do status de
+  -- produção acima. booking_date é a data que o cliente pediu para o
+  -- evento/entrega; booking_status controla a aprovação da loja para essa
+  -- data específica (não confundir com o andamento da produção em si).
+  booking_date date,
+  booking_status text not null default 'pending_approval' check (
+    booking_status in ('pending_approval', 'approved', 'rejected')
+  ),
+  booking_rejection_reason text,
+  booking_alternative_date date,
+  -- Sem gateway de pagamento neste projeto (checkout é 100% via WhatsApp).
+  -- refund_status é só uma flag operacional: quando a loja recusa uma data
+  -- já paga por fora (Pix combinado manualmente), isso vira uma tarefa
+  -- manual para o admin resolver o estorno fora do site.
+  refund_status text not null default 'none' check (
+    refund_status in ('none', 'refund_pending', 'refunded')
+  ),
   created_at timestamptz not null default now()
 );
 
@@ -77,6 +94,8 @@ create index if not exists orders_user_id_idx on public.orders (user_id);
 create index if not exists orders_status_idx on public.orders (status);
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
 create index if not exists orders_order_code_idx on public.orders (order_code);
+create index if not exists orders_booking_date_idx on public.orders (booking_date);
+create index if not exists orders_booking_status_idx on public.orders (booking_status);
 
 -- ============================================================================
 -- 2. FUNÇÃO AUXILIAR: is_admin()
@@ -232,6 +251,113 @@ drop trigger if exists orders_client_cancel_guard on public.orders;
 create trigger orders_client_cancel_guard
   before update on public.orders
   for each row execute function public.enforce_client_cancel_only_status();
+
+-- ============================================================================
+-- 4b. MÓDULO DE AGENDAMENTO — capacidade semanal e horizonte de 60 dias
+-- ============================================================================
+
+-- Cota semanal configurável sem precisar editar código/trigger. Uma linha
+-- só, sempre id=1. Se quiser cotas diferentes por período do ano, isso
+-- precisaria virar uma tabela por semana — fora de escopo por ora.
+create table if not exists public.booking_settings (
+  id integer primary key default 1 check (id = 1),
+  weekly_capacity integer not null default 20 check (weekly_capacity > 0),
+  horizon_days integer not null default 60 check (horizon_days > 0)
+);
+insert into public.booking_settings (id) values (1) on conflict (id) do nothing;
+
+alter table public.booking_settings enable row level security;
+drop policy if exists "booking_settings_public_read" on public.booking_settings;
+create policy "booking_settings_public_read"
+  on public.booking_settings for select
+  using (true);
+drop policy if exists "booking_settings_admin_write" on public.booking_settings;
+create policy "booking_settings_admin_write"
+  on public.booking_settings for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Conta quantos pedidos já ocupam a semana de uma data (segunda a domingo),
+-- contando só pedidos com booking_status IN ('pending_approval','approved')
+-- e status <> 'cancelado' — pedido recusado ou cancelado libera a vaga.
+create or replace function public.booking_week_occupancy(p_date date)
+returns integer
+language sql
+stable
+as $$
+  select count(*)::integer
+  from public.orders
+  where booking_date is not null
+    and booking_date >= date_trunc('week', p_date::timestamp)::date
+    and booking_date < (date_trunc('week', p_date::timestamp)::date + 7)
+    and booking_status in ('pending_approval', 'approved')
+    and status <> 'cancelado';
+$$;
+
+-- Valida, no servidor, TUDO que a UI já devia impedir: horizonte máximo,
+-- data no passado, e cota semanal. Isso roda em qualquer INSERT/UPDATE
+-- que define/altera booking_date, então nenhuma rota de API (nem uma
+-- futura, nem um bug) consegue criar um agendamento fora das regras
+-- só porque esqueceu de checar no código da aplicação.
+create or replace function public.enforce_booking_capacity()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_settings record;
+  v_occupancy integer;
+begin
+  if new.booking_date is null then
+    return new;
+  end if;
+
+  -- Se a data de agendamento não mudou, e o status de agendamento também
+  -- não, não precisa revalidar (evita re-contar a própria linha em updates
+  -- que não mexem em agendamento, ex: admin avançando status de produção).
+  if TG_OP = 'UPDATE'
+     and new.booking_date is not distinct from old.booking_date
+     and new.booking_status is not distinct from old.booking_status
+  then
+    return new;
+  end if;
+
+  select * into v_settings from public.booking_settings where id = 1;
+
+  if new.booking_date < current_date then
+    raise exception 'Data de agendamento não pode ser no passado.';
+  end if;
+
+  if new.booking_date > current_date + v_settings.horizon_days then
+    raise exception 'Data de agendamento além do horizonte máximo de % dias.', v_settings.horizon_days;
+  end if;
+
+  if new.booking_status in ('pending_approval', 'approved') and new.status <> 'cancelado' then
+    -- Exclui a própria linha da contagem em updates (senão um pedido
+    -- já aprovado se autobloquearia ao ser salvo de novo).
+    select count(*)::integer into v_occupancy
+    from public.orders
+    where booking_date is not null
+      and booking_date >= date_trunc('week', new.booking_date::timestamp)::date
+      and booking_date < (date_trunc('week', new.booking_date::timestamp)::date + 7)
+      and booking_status in ('pending_approval', 'approved')
+      and status <> 'cancelado'
+      and id <> coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid);
+
+    if v_occupancy >= v_settings.weekly_capacity then
+      raise exception 'Semana sem vagas disponíveis (capacidade de % pedidos atingida).', v_settings.weekly_capacity;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists orders_booking_capacity_guard on public.orders;
+create trigger orders_booking_capacity_guard
+  before insert or update on public.orders
+  for each row execute function public.enforce_booking_capacity();
 
 -- ============================================================================
 -- 5. STORAGE — bucket público para fotos dos produtos

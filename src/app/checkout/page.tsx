@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
@@ -8,6 +8,21 @@ import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import ShippingSelector from "@/components/ShippingSelector";
+import BookingCalendar, { WeekOccupancyData } from "@/components/BookingCalendar";
+
+function mondayOf(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 export default function CheckoutPage() {
   const { items, subtotalCents, clear } = useCartStore();
@@ -26,6 +41,31 @@ export default function CheckoutPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [bookingDate, setBookingDate] = useState<string | null>(null);
+  const [visibleWeekStart, setVisibleWeekStart] = useState(() => mondayOf(today));
+  const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
+  const [horizonDays, setHorizonDays] = useState(60);
+
+  useEffect(() => {
+    const start = visibleWeekStart;
+    const end = addDays(visibleWeekStart, 6);
+    fetch(`/api/agenda?start=${start}&end=${end}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.weeks) setOccupancies(data.weeks);
+        if (data.settings?.horizon_days) setHorizonDays(data.settings.horizon_days);
+      })
+      .catch(() => {
+        // Se a agenda não carregar, o cliente ainda consegue finalizar
+        // sem escolher data — não bloqueia o checkout por isso.
+      });
+  }, [visibleWeekStart]);
+
+  const handleNavigateWeek = useCallback((direction: -1 | 1) => {
+    setVisibleWeekStart((w) => addDays(w, direction * 7));
+  }, []);
 
   const shippingCharged = shipping.manual ? 0 : shipping.price_cents;
   const total = subtotalCents() + shippingCharged;
@@ -57,6 +97,7 @@ export default function CheckoutPage() {
           cartItems: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
           shipping: { method: shipping.method, city: shipping.city, cep: shipping.cep },
           note: note.trim() || undefined,
+          bookingDate: bookingDate ?? undefined,
         }),
       });
 
@@ -82,6 +123,11 @@ export default function CheckoutPage() {
         total_cents: total,
         status: "novo",
         note: note.trim() || null,
+        booking_date: bookingDate,
+        booking_status: "pending_approval",
+        booking_rejection_reason: null,
+        booking_alternative_date: null,
+        refund_status: "none",
         created_at: new Date().toISOString(),
       };
       return order;
@@ -159,6 +205,35 @@ export default function CheckoutPage() {
           <div className="mt-4">
             <ShippingSelector items={orderItems} onChange={setShipping} />
           </div>
+        </section>
+
+        <section>
+          <h2 className="font-display text-xl text-ink">Data desejada (opcional)</h2>
+          <p className="mt-1 text-sm text-ink-soft">
+            Escolha a data do seu evento ou entrega. Semanas muito cheias
+            ficam bloqueadas — se não escolher, combinamos o prazo por
+            WhatsApp normalmente.
+          </p>
+          <div className="mt-4">
+            <BookingCalendar
+              occupancies={occupancies}
+              horizonDays={horizonDays}
+              visibleWeekStart={visibleWeekStart}
+              onNavigateWeek={handleNavigateWeek}
+              onSelectDate={(date) => setBookingDate((d) => (d === date ? null : date))}
+              selectedDate={bookingDate}
+            />
+          </div>
+          <p className="mt-3 rounded-2xl bg-babyblue-100 px-4 py-3 text-sm text-ink">
+            ⚠️ <strong>Importante:</strong> pedidos com data marcada estão
+            sujeitos à confirmação de agenda pela loja. Caso não possamos
+            atender na data solicitada
+            {bookingDate
+              ? ` (${new Date(bookingDate + "T12:00:00").toLocaleDateString("pt-BR")})`
+              : ""}
+            , entraremos em contato via WhatsApp para propor uma nova data
+            ou realizar o estorno integral.
+          </p>
         </section>
 
         {error && (

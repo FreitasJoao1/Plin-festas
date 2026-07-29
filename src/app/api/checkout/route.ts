@@ -12,12 +12,15 @@ interface CheckoutBody {
   cartItems: { product_id: string; quantity: number }[];
   shipping: { method: ShippingMethod; city?: DeliveryCity; cep?: string };
   note?: string;
+  /** Data desejada pelo cliente para o evento/entrega, formato YYYY-MM-DD. */
+  bookingDate?: string;
 }
 
 const VALID_SHIPPING_METHODS: ShippingMethod[] = [
   "retirada", "entrega_propria", "uber_flash", "correios",
 ];
 const VALID_CITIES: DeliveryCity[] = ["salvador", "lauro_de_freitas"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const MAX_ITEMS = 60;
 const MAX_QTY_PER_ITEM = 500;
@@ -65,6 +68,10 @@ function validate(body: unknown): body is CheckoutBody {
   if (shipping.cep !== undefined && typeof shipping.cep !== "string") return false;
 
   if (b.note !== undefined && typeof b.note !== "string") return false;
+
+  if (b.bookingDate !== undefined) {
+    if (typeof b.bookingDate !== "string" || !DATE_RE.test(b.bookingDate)) return false;
+  }
 
   return true;
 }
@@ -143,7 +150,7 @@ export async function POST(req: NextRequest) {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const order = await createOrder({
+        const result = await createOrder({
           order_code: generateOrderCode(),
           customer_name: name,
           customer_email: email,
@@ -155,10 +162,19 @@ export async function POST(req: NextRequest) {
           shipping_cents,
           total_cents,
           note: note || null,
+          booking_date: body.bookingDate ?? null,
         });
+
+        if (!result.ok) {
+          // Erro de negócio (semana lotada, data fora do horizonte etc.),
+          // vindo do trigger de capacidade no banco — não é um bug, é a
+          // regra funcionando. Repassa como 409, não como falha de servidor.
+          return NextResponse.json({ error: result.error }, { status: 409 });
+        }
+
         return NextResponse.json({
-          orderId: order.id,
-          orderCode: order.order_code,
+          orderId: result.id,
+          orderCode: result.order_code,
           total_cents,
         });
       } catch (err) {

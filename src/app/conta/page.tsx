@@ -398,6 +398,49 @@ export default function ContaPage() {
                           ))}
                         </ul>
 
+                        {order.booking_date && (
+                          <div className="text-xs rounded-lg px-3 py-2 bg-muted/50 space-y-1">
+                            <p>
+                              📅 Data solicitada:{" "}
+                              <strong>
+                                {new Date(order.booking_date + "T12:00:00").toLocaleDateString("pt-BR")}
+                              </strong>
+                              {order.booking_status === "pending_approval" && (
+                                <span className="ml-2 text-amber-600 font-semibold">Aguardando confirmação</span>
+                              )}
+                              {order.booking_status === "approved" && (
+                                <span className="ml-2 text-emerald-600 font-semibold">Confirmada ✓</span>
+                              )}
+                              {order.booking_status === "rejected" && (
+                                <span className="ml-2 text-red-600 font-semibold">Não foi possível confirmar</span>
+                              )}
+                            </p>
+                            {order.booking_status === "rejected" && (
+                              <>
+                                {order.booking_rejection_reason && (
+                                  <p className="text-muted-foreground">
+                                    Motivo: {order.booking_rejection_reason}
+                                  </p>
+                                )}
+                                {order.booking_alternative_date && (
+                                  <p className="text-muted-foreground">
+                                    Data alternativa sugerida:{" "}
+                                    {new Date(order.booking_alternative_date + "T12:00:00").toLocaleDateString("pt-BR")}
+                                  </p>
+                                )}
+                                <a
+                                  href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "5571993008464"}?text=${encodeURIComponent(`Olá! Sobre o pedido ${order.order_code}, gostaria de conversar sobre a data.`)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-block mt-1 text-green-700 font-semibold hover:underline"
+                                >
+                                  Falar no WhatsApp →
+                                </a>
+                              </>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-between pt-2 border-t">
                           <span className="font-semibold">{formatBRL(order.total_cents)}</span>
 

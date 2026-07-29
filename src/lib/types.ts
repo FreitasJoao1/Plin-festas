@@ -47,6 +47,12 @@ export type OrderStatus =
   | "entregue"
   | "cancelado";
 
+/** Status de aprovação da DATA solicitada — independente do status de produção acima. */
+export type BookingStatus = "pending_approval" | "approved" | "rejected";
+
+/** Estorno é sempre manual (sem gateway de pagamento no site). */
+export type RefundStatus = "none" | "refund_pending" | "refunded";
+
 export interface OrderItem {
   product_id: string;
   name: string;
@@ -71,7 +77,25 @@ export interface Order {
   status: OrderStatus;
   /** Observação do cliente */
   note: string | null;
+  booking_date: string | null;
+  booking_status: BookingStatus;
+  booking_rejection_reason: string | null;
+  booking_alternative_date: string | null;
+  refund_status: RefundStatus;
   created_at: string;
+}
+
+export interface BookingSettings {
+  weekly_capacity: number;
+  horizon_days: number;
+}
+
+/** Ocupação agregada de uma semana, para renderizar o calendário. */
+export interface WeekOccupancy {
+  /** Segunda-feira da semana, formato YYYY-MM-DD */
+  week_start: string;
+  count: number;
+  capacity: number;
 }
 
 export interface Profile {

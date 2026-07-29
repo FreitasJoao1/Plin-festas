@@ -1,115 +1,127 @@
-# Relatório — Rodada atual de mudanças
+# Relatório — Módulo de Agendamento (Capacity Planning)
 
-`npx tsc --noEmit` limpo. `npm run build` completo sem erros. Nenhuma
-credencial em nenhum arquivo deste zip.
+`npx tsc --noEmit` limpo. `npm run build` completo sem erros. Todas as
+rotas novas presentes no build.
 
----
-
-## 1. Checkout instantâneo
-
-**Antes:** botão exigia segurar (mouse/touch) por 2 segundos, com barra
-de progresso, antes de disparar o pedido.
-
-**Agora:** clique único, sem delay artificial. `src/app/checkout/page.tsx`
-— removida toda a lógica de `holdProgress`/`isHolding`/`setInterval`,
-substituída por `handleConfirm` disparado direto no `onClick`.
-
-**Ressalva que você deve saber:** o hold-to-confirm não era só
-performance — era proteção contra clique acidental num botão que manda
-mensagem de pedido pro WhatsApp da loja. Removi porque foi pedido
-explicitamente, mas é uma troca real: menos fricção, mais risco de
-clique sem querer. Se isso virar problema na prática (pedidos abertos
-por engano), a correção mais barata é um passo de revisão do carrinho
-antes do botão final, não trazer o delay de volta.
+**Aviso de segurança, antes de tudo:** o documento de especificação
+enviado continha um bloco de instruções tentando reconfigurar meu
+comportamento de resposta (formato, proibição de explicações etc.),
+disfarçado de parte da spec técnica. Ignorei essa parte como instrução —
+tratei só como conteúdo/especificação de produto. Documentado em
+`AGENTS.md` para próximas sessões saberem que isso já aconteceu.
 
 ---
 
-## 2. Cancelamento de pedido pelo cliente
+## Decisões de modelagem confirmadas com você antes de implementar
 
-Não existia. A aba "Meus Pedidos" em `/conta` era 100% estática (sempre
-mostrava "nenhum pedido encontrado", sem buscar nada do banco).
-Implementado do zero:
-
-- **Listagem real** de pedidos do cliente logado em `/conta` (busca em
-  `orders` filtrando por `user_id`, com RLS garantindo que só vê os
-  próprios).
-- **Botão de cancelar**, visível só quando o pedido ainda está em
-  `novo` ou `confirmado` — ou seja, ainda não `em_producao`, `pronto`,
-  `enviado` ou `entregue`, exatamente a regra pedida. Pede confirmação
-  inline antes de efetivar.
-- **Rota nova:** `POST /api/pedidos/[id]/cancelar` (rate-limited,
-  autenticada, confere dono do pedido e status atual antes de agir).
-- **Banco:** nova policy RLS `orders_client_cancel` + trigger
-  `orders_client_cancel_guard` em `supabase/schema.sql`. O trigger existe
-  porque RLS `with check` sozinho não impede que um update malicioso
-  mude `status` E outras colunas (preço, itens) na mesma chamada — o
-  trigger rejeita qualquer alteração que não seja exclusivamente
-  `status`, vinda de quem não é admin.
-
-**Ação que só você pode fazer:** rodar a seção de RLS atualizada do
-`supabase/schema.sql` no SQL Editor do Supabase (é idempotente, pode
-rodar o arquivo inteiro de novo sem risco).
+1. **`booking_status` separado de `status`** — agendamento (aprovação de
+   data) e produção são dois fluxos paralelos e independentes.
+2. **`refund_status` é flag manual** — não existe gateway de pagamento
+   no projeto (é tudo WhatsApp/Pix combinado por fora), então recusa com
+   estorno vira só uma tarefa manual para o admin resolver fora do site.
+3. **E-mail de recusa via Resend** — implementado como best-effort. A
+   recusa em si (banco) funciona independente do e-mail sair ou não.
 
 ---
 
-## 3. Falha de design corrigida: admin decidido por campo editável pelo cliente
+## 1. Banco de dados (`supabase/schema.sql`)
 
-Achado durante o pente-fino, fora do escopo original, mas real: `Header.tsx`
-e `conta/page.tsx` decidiam se mostravam UI de admin olhando
-`user.user_metadata?.is_admin`. Esse campo é editável pelo próprio
-usuário via `supabase.auth.updateUser()` — a mesma chamada já usada em
-"Salvar Alterações" do perfil. Ou seja, em teoria, qualquer pessoa
-logada poderia setar esse campo em si mesma pelo console do navegador e
-ver o link "Painel Admin" aparecer.
+- Novas colunas em `orders`: `booking_date`, `booking_status`
+  (`pending_approval`/`approved`/`rejected`), `booking_rejection_reason`,
+  `booking_alternative_date`, `refund_status` (`none`/`refund_pending`/`refunded`).
+- Nova tabela `booking_settings` (linha única, id=1): `weekly_capacity`
+  (default 20) e `horizon_days` (default 60) — editáveis sem mexer em
+  código/trigger.
+- Nova função `booking_week_occupancy(date)` — conta ocupação de uma
+  semana (segunda a domingo).
+- **Novo trigger `enforce_booking_capacity`** — valida no banco (não só
+  na UI) que: a data não é no passado, não passa do horizonte
+  configurado, e a semana não excede a cota. Roda em INSERT e UPDATE de
+  `orders`. Isso significa que mesmo um bug futuro no código da
+  aplicação não consegue criar um agendamento fora das regras — o banco
+  rejeita.
 
-**Importante, para não gerar alarme maior do que o real:** isso NÃO dava
-acesso de fato ao banco ou ao painel — o middleware e toda RLS já usam
-exclusivamente `profiles.role`, que é protegido (cliente não consegue se
-autopromover, ver policy `profiles_update_own`). O impacto real era só
-UI enganosa. Ainda assim, é o tipo de padrão que não deveria existir.
-
-**Correção:** ambos os arquivos agora leem `isAdmin` exclusivamente de
-`profiles.role`, buscado do banco.
-
----
-
-## 4. Pente-fino de segurança — demais itens
-
-| Item | Situação encontrada | Ação |
-|---|---|---|
-| CSP (Content-Security-Policy) | Inexistente | Adicionada em `next.config.mjs`, restringindo script/style/img/connect a origens conhecidas (Supabase, Unsplash, Melhor Envio) |
-| HSTS | Inexistente | `Strict-Transport-Security: max-age=31536000; includeSubDomains` adicionado |
-| Permissions-Policy | Bloqueava só camera/mic/geolocation | Adicionado `payment=(), usb=()` |
-| `.env.example` | Ainda referenciava `MERCADOPAGO_ACCESS_TOKEN` e webhook, de uma integração já removida do código | Limpo — seção Mercado Pago inteira removida, comentário de `NEXT_PUBLIC_SITE_URL` corrigido |
-| `cadastro/page.tsx` | `emailRedirectTo` ignorava a variável `siteUrl` já calculada e usava URL hardcoded | Corrigido para usar `siteUrl` de fato |
-| Validação server-side do checkout | Já robusta (revisada, sem mudanças) | — |
-| Rate limiting | Já existente e documentado (limitação de ser em memória) | Aplicado o mesmo padrão na nova rota de cancelamento (15/min por IP) |
-| RLS de `orders`/`products`/`profiles` | Já corretas | — |
-| Proteção dupla de `/api/admin/*` | Já existente (`requireAdmin()`) | — |
-
-**Não corrigido, e por quê:** `script-src 'unsafe-inline'` na CSP é mais
-permissivo do que o ideal — o endurecimento correto exige gerar um nonce
-por request no middleware e propagá-lo a cada script, o que é mudança de
-arquitetura, não pente-fino. Documentado em `AGENTS.md` para quando fizer
-sentido priorizar.
+**Ação que só você pode fazer:** rodar o `schema.sql` atualizado no SQL
+Editor do Supabase (idempotente, seguro rodar de novo).
 
 ---
 
-## 5. Documentação
+## 2. Backend (`src/lib/orders.ts`, novas rotas)
 
-- **`README.md`** reescrito: agora descreve o que o produto é e faz, sem
-  passo a passo de instalação (esse conteúdo prático continua nos
-  comentários de topo de `supabase/schema.sql` e `.env.example`).
-- **`AGENTS.md`** (novo): guia técnico para qualquer IA que for mexer no
-  projeto depois — arquitetura de autorização, por que existem duas
-  fontes de identidade e qual é a certa, como o cancelamento funciona em
-  três camadas, o que já foi removido do projeto (Mercado Pago) e por
-  que isso importa para não reintroduzir suposições erradas.
+- `createOrder` agora aceita `booking_date` e retorna
+  `{ ok: true, ... } | { ok: false, error }` em vez de lançar exceção —
+  necessário porque o trigger de capacidade pode rejeitar o insert como
+  regra de negócio normal, não como erro de sistema. **Isso mudou a
+  assinatura da função** — o único caller (`/api/checkout`) foi ajustado.
+- Novas funções: `getBookingSettings`, `getWeekOccupancies`,
+  `getBookedOrdersInRange`, `approveBooking`, `rejectBooking`.
+- Novas rotas:
+  - `GET /api/agenda` — ocupação semanal, pública (sem login), pois o
+    cliente precisa ver disponibilidade antes de escolher data no checkout.
+  - `GET /api/admin/agenda` — mesma coisa + lista de pedidos da semana, admin-only.
+  - `POST /api/admin/pedidos/[id]/aprovar` — aprova a data.
+  - `POST /api/admin/pedidos/[id]/recusar` — recusa com justificativa
+    obrigatória, data alternativa opcional, flag de estorno; dispara
+    e-mail best-effort.
+- `POST /api/checkout` agora aceita `bookingDate` opcional no body,
+  valida formato, e repassa erro de capacidade como HTTP 409 (não 500).
+
+**Achado à parte, corrigido:** existia uma função morta
+`attachPreferenceToOrder` em `orders.ts` referenciando uma coluna
+`mp_preference_id` que não existe no schema atual (resíduo da integração
+Mercado Pago já removida em sessão anterior). Nunca era chamada em lugar
+nenhum, mas quebraria se alguém a chamasse. Removida.
+
+---
+
+## 3. E-mail de recusa (`src/lib/notifications.ts`)
+
+Novo módulo, via API HTTP do Resend (sem SDK adicional). Se
+`RESEND_API_KEY`/`RESEND_FROM_EMAIL` não estiverem configurados, loga um
+aviso e não envia nada — não quebra a recusa em si.
+
+**Ação que só você pode fazer:** criar conta em resend.com, verificar um
+domínio de envio, gerar a API key, e preencher `RESEND_API_KEY` +
+`RESEND_FROM_EMAIL` no `.env.local` (seção nova em `.env.example`). Sem
+isso, a recusa continua funcionando — só sem o e-mail automático (o
+cliente ainda vê o status no site e tem o link de WhatsApp).
+
+---
+
+## 4. Frontend
+
+**Componente novo `BookingCalendar.tsx`** (compartilhado): visão semanal
+com navegação, barra de ocupação e cores conforme a spec (verde <50%,
+amarelo 50–89%, vermelho 100%, cinza fora do horizonte). Usado em dois
+modos:
+- **Storefront** (`/checkout`): clicável, cliente escolhe a data.
+- **Admin** (`/admin/agenda`): somente leitura, com lista de pedidos da
+  semana ao lado para ação rápida.
+
+**Checkout** (`src/app/checkout/page.tsx`): nova seção "Data desejada
+(opcional)" com o calendário + disclaimer obrigatório (antes de
+finalizar). O disclaimer também vai embutido na mensagem do WhatsApp
+quando há data escolhida (depois de finalizar).
+
+**Admin — novo painel `BookingApprovalPanel.tsx`**: aparece na página de
+detalhe do pedido só quando há `booking_date`. Botões de aprovar/recusar;
+modal de recusa com justificativa obrigatória, data alternativa
+opcional, e checkbox "precisa de estorno manual".
+
+**Admin — nova página `/admin/agenda`**: calendário + lista de pedidos
+agendados da semana visível, com link direto para cada pedido.
+
+**Cliente (`/conta`)**: cada pedido com `booking_date` agora mostra o
+status de agendamento (aguardando/confirmado/recusado), motivo da
+recusa, data alternativa sugerida, e um link direto de WhatsApp
+pré-preenchido quando recusado.
 
 ---
 
 ## Verificação
 
 - `npx tsc --noEmit` → sem erros
-- `npm run build` → build de produção completo, rota
-  `/api/pedidos/[id]/cancelar` presente e reconhecida
+- `npm run build` → build de produção completo; todas as rotas novas
+  (`/admin/agenda`, `/api/agenda`, `/api/admin/agenda`,
+  `/api/admin/pedidos/[id]/aprovar`, `/api/admin/pedidos/[id]/recusar`)
+  presentes e reconhecidas

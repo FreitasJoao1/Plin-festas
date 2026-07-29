@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus } from "@/lib/types";
+import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy } from "@/lib/types";
 
 export interface CreateOrderInput {
   order_code: string;
@@ -15,6 +15,8 @@ export interface CreateOrderInput {
   shipping_cents: number;
   total_cents: number;
   note: string | null;
+  /** Data desejada pelo cliente para o evento/entrega (YYYY-MM-DD). Opcional. */
+  booking_date: string | null;
 }
 
 /**
@@ -23,9 +25,12 @@ export interface CreateOrderInput {
  */
 export async function createOrder(
   input: CreateOrderInput
-): Promise<Pick<Order, "id" | "order_code">> {
+): Promise<
+  | { ok: true; id: string; order_code: string }
+  | { ok: false; error: string }
+> {
   if (!isSupabaseConfigured()) {
-    return { id: `demo-${randomUUID()}`, order_code: input.order_code };
+    return { ok: true, id: `demo-${randomUUID()}`, order_code: input.order_code };
   }
 
   const supabase = await createClient();
@@ -49,12 +54,19 @@ export async function createOrder(
       total_cents: input.total_cents,
       status: "novo",
       note: input.note,
+      booking_date: input.booking_date,
     })
     .select("id, order_code")
     .single();
 
-  if (error) throw new Error(`Erro ao criar pedido: ${error.message}`);
-  return data;
+  // O trigger `enforce_booking_capacity` pode rejeitar o insert (data no
+  // passado, fora do horizonte, ou semana lotada) — isso chega aqui como
+  // erro do Postgres, não como exceção JS, então precisa ser repassado
+  // como resultado de negócio, não relançado como erro genérico 500.
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, id: data.id, order_code: data.order_code };
 }
 
 export async function getOrdersForUser(userId: string): Promise<Order[]> {
@@ -82,18 +94,6 @@ export async function getOrderById(id: string): Promise<Order | null> {
     .single();
   if (error) return null;
   return data as Order;
-}
-
-export async function attachPreferenceToOrder(
-  orderId: string,
-  preferenceId: string
-) {
-  if (!isSupabaseConfigured() || orderId.startsWith("demo-")) return;
-  const supabase = await createClient();
-  await supabase!
-    .from("orders")
-    .update({ mp_preference_id: preferenceId })
-    .eq("id", orderId);
 }
 
 // ============================================================================
@@ -124,6 +124,140 @@ export async function updateOrderStatus(
     return { error: "Supabase não está configurado neste ambiente (modo demo)." };
   }
   const { error } = await supabase.from("orders").update({ status }).eq("id", id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// ============================================================================
+// Módulo de agendamento (capacity planning) — funções de admin
+// ============================================================================
+
+export async function getBookingSettings(): Promise<BookingSettings> {
+  const supabase = await createClient();
+  if (!supabase) return { weekly_capacity: 20, horizon_days: 60 };
+  const { data, error } = await supabase
+    .from("booking_settings")
+    .select("weekly_capacity, horizon_days")
+    .eq("id", 1)
+    .single();
+  if (error || !data) return { weekly_capacity: 20, horizon_days: 60 };
+  return data;
+}
+
+/**
+ * Ocupação por semana num intervalo de datas, para preencher o grid do
+ * calendário (admin e cliente). Agrupa no servidor em vez de trazer todos
+ * os pedidos pro client agregar — evita expor dados de outros clientes.
+ */
+export async function getWeekOccupancies(
+  startDate: string,
+  endDate: string
+): Promise<WeekOccupancy[]> {
+  const supabase = await createClient();
+  if (!supabase) return [];
+
+  const settings = await getBookingSettings();
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("booking_date")
+    .not("booking_date", "is", null)
+    .gte("booking_date", startDate)
+    .lte("booking_date", endDate)
+    .in("booking_status", ["pending_approval", "approved"])
+    .neq("status", "cancelado");
+
+  if (error || !data) return [];
+
+  const buckets = new Map<string, number>();
+  for (const row of data as { booking_date: string }[]) {
+    const d = new Date(row.booking_date + "T12:00:00");
+    // Segunda-feira da semana (getDay: 0=domingo)
+    const day = d.getDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diffToMonday);
+    const weekStart = d.toISOString().slice(0, 10);
+    buckets.set(weekStart, (buckets.get(weekStart) ?? 0) + 1);
+  }
+
+  return Array.from(buckets.entries())
+    .map(([week_start, count]) => ({ week_start, count, capacity: settings.weekly_capacity }))
+    .sort((a, b) => a.week_start.localeCompare(b.week_start));
+}
+
+/** Aprova a data solicitada — o pedido segue seu fluxo normal de produção. */
+export async function approveBooking(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) {
+    return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  }
+  const { error } = await supabase
+    .from("orders")
+    .update({ booking_status: "approved" })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+/**
+ * Lista os pedidos agendados dentro de um intervalo de datas — usado na
+ * página /admin/agenda para o admin ver e agir (aprovar/recusar) sem
+ * precisar abrir pedido por pedido.
+ */
+export async function getBookedOrdersInRange(
+  startDate: string,
+  endDate: string
+): Promise<Order[]> {
+  const supabase = await createClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .not("booking_date", "is", null)
+    .gte("booking_date", startDate)
+    .lte("booking_date", endDate)
+    .order("booking_date", { ascending: true });
+  if (error) {
+    console.error("Erro ao buscar pedidos agendados:", error.message);
+    return [];
+  }
+  return data as Order[];
+}
+
+export interface RejectBookingInput {
+  reason: string;
+  alternativeDate?: string | null;
+  /** Se true, marca refund_status='refund_pending' — tarefa manual para o admin resolver o estorno fora do site (sem gateway de pagamento). */
+  needsRefund: boolean;
+}
+
+/**
+ * Recusa a data solicitada. Não mexe no `status` de produção — o pedido
+ * fica com booking_status='rejected' e é responsabilidade do fluxo de
+ * comunicação (WhatsApp/e-mail) resolver com o cliente uma nova data ou
+ * cancelamento. Se needsRefund, sinaliza refund_status='refund_pending'
+ * como tarefa manual — não existe gateway de pagamento neste projeto,
+ * então o estorno em si é sempre feito por fora (Pix manual etc.).
+ */
+export async function rejectBooking(
+  id: string,
+  input: RejectBookingInput
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) {
+    return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  }
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      booking_status: "rejected",
+      booking_rejection_reason: input.reason,
+      booking_alternative_date: input.alternativeDate ?? null,
+      refund_status: input.needsRefund ? "refund_pending" : "none",
+    })
+    .eq("id", id);
   if (error) return { error: error.message };
   return { ok: true };
 }

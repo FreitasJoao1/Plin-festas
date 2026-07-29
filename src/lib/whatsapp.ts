@@ -42,6 +42,9 @@ export function buildWhatsAppMessage(order: Order): string {
     `💰 *Subtotal:* ${formatBRL(order.subtotal_cents)}`,
     `💰 *Total:* ${formatBRL(order.total_cents)}`,
     order.note ? `\n📝 *Obs:* ${order.note}` : "",
+    order.booking_date
+      ? `\n📅 *Data solicitada:* ${new Date(order.booking_date + "T12:00:00").toLocaleDateString("pt-BR")}\n_Sujeito à confirmação de agenda — entraremos em contato caso não seja possível atender nessa data._`
+      : "",
     ``,
     `_Pedido enviado pelo site plin-festas-zeta.vercel.app_`,
   ]
