@@ -5,6 +5,7 @@ import { getShippingQuote } from "@/lib/shipping";
 import { createOrder } from "@/lib/orders";
 import { generateOrderCode } from "@/lib/order-code";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { validateCoupon, incrementCouponUsage } from "@/lib/coupons";
 import { DeliveryCity, OrderItem, ShippingMethod } from "@/lib/types";
 
 interface CheckoutBody {
@@ -14,6 +15,8 @@ interface CheckoutBody {
   note?: string;
   /** Data desejada pelo cliente para o evento/entrega, formato YYYY-MM-DD. */
   bookingDate?: string;
+  /** Código do cupom de desconto aplicado no checkout, se houver. */
+  couponCode?: string;
 }
 
 const VALID_SHIPPING_METHODS: ShippingMethod[] = [
@@ -72,6 +75,8 @@ function validate(body: unknown): body is CheckoutBody {
   if (b.bookingDate !== undefined) {
     if (typeof b.bookingDate !== "string" || !DATE_RE.test(b.bookingDate)) return false;
   }
+
+  if (b.couponCode !== undefined && typeof b.couponCode !== "string") return false;
 
   return true;
 }
@@ -141,6 +146,26 @@ export async function POST(req: NextRequest) {
     0
   );
 
+  // Cupom de desconto — revalidado do zero aqui, no servidor, contra o
+  // carrinho recém-recalculado acima. O que o client mandou como "desconto"
+  // (se mandou algo) é ignorado; só o que sai de validateCoupon() conta.
+  let coupon_code: string | null = null;
+  let discount_cents = 0;
+  let appliedCouponId: string | null = null;
+  if (body.couponCode && body.couponCode.trim()) {
+    const couponResult = await validateCoupon({
+      code: body.couponCode,
+      items,
+      products,
+    });
+    if (!couponResult.ok) {
+      return badRequest(couponResult.error);
+    }
+    coupon_code = couponResult.coupon.code;
+    discount_cents = couponResult.discountCents;
+    appliedCouponId = couponResult.coupon.id;
+  }
+
   let correiosQuoteCents: number | null = null;
   if (body.shipping.method === "correios" && body.shipping.cep) {
     correiosQuoteCents = await calculateCorreiosFreightCents(
@@ -155,7 +180,7 @@ export async function POST(req: NextRequest) {
   });
 
   const shipping_cents = shippingQuote.manual ? 0 : shippingQuote.price_cents;
-  const total_cents = subtotal_cents + shipping_cents;
+  const total_cents = Math.max(0, subtotal_cents - discount_cents) + shipping_cents;
 
   try {
     // Pequeno retry caso o código gerado colida (extremamente raro —
@@ -170,6 +195,8 @@ export async function POST(req: NextRequest) {
           customer_phone: phone,
           items,
           subtotal_cents,
+          coupon_code,
+          discount_cents,
           shipping_method: body.shipping.method,
           shipping_city: body.shipping.city ?? null,
           shipping_cents,
@@ -185,9 +212,18 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: result.error }, { status: 409 });
         }
 
+        // Conta o uso do cupom só depois que o pedido foi criado com
+        // sucesso — não deixa o checkout falhar por causa disso.
+        if (appliedCouponId) {
+          await incrementCouponUsage(appliedCouponId);
+        }
+
         return NextResponse.json({
           orderId: result.id,
           orderCode: result.order_code,
+          subtotal_cents,
+          discount_cents,
+          coupon_code,
           total_cents,
         });
       } catch (err) {

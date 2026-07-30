@@ -62,6 +62,33 @@ export interface OrderItem {
   quantity: number;
 }
 
+// ── Cupons de desconto ──────────────────────────────────────────────────
+
+export type CouponDiscountType = "percentage" | "fixed";
+
+/** A quais itens do carrinho o cupom se aplica. */
+export type CouponScope = "all" | "category" | "products";
+
+export interface Coupon {
+  id: string;
+  code: string;
+  description: string;
+  discount_type: CouponDiscountType;
+  /** Percentual (1-100) se discount_type='percentage', ou centavos se 'fixed'. */
+  discount_value: number;
+  scope: CouponScope;
+  scope_category: ProductCategory | null;
+  scope_product_ids: string[];
+  /** Valor mínimo (centavos) dos itens ELEGÍVEIS ao cupom para o desconto valer. */
+  min_order_value_cents: number | null;
+  max_uses: number | null;
+  used_count: number;
+  active: boolean;
+  valid_from: string | null;
+  valid_until: string | null;
+  created_at: string;
+}
+
 /** Estado de um pagamento opcional via InfinitePay — 'none' quando o cliente escolheu WhatsApp em vez de pagar online. */
 export type PaymentStatus = "none" | "pending" | "paid" | "failed";
 export type PaymentMethod = "pix" | "credit_card";
@@ -76,6 +103,10 @@ export interface Order {
   customer_email: string;
   items: OrderItem[];
   subtotal_cents: number;
+  /** Código do cupom aplicado (já validado no servidor), ou null se nenhum. */
+  coupon_code: string | null;
+  /** Desconto em centavos já calculado e validado no servidor. */
+  discount_cents: number;
   shipping_method: ShippingMethod;
   shipping_city: DeliveryCity | null;
   shipping_cents: number;

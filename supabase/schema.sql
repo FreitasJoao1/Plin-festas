@@ -592,6 +592,91 @@ end;
 $$;
 
 -- ============================================================================
+-- 4d. CUPONS DE DESCONTO
+-- ============================================================================
+-- Cupom aplicado pelo cliente no checkout (campo "cupom de desconto").
+-- O desconto pode valer para TODO o carrinho, só para uma categoria
+-- (classe) de produto, ou só para uma lista específica de produtos —
+-- controlado pela coluna `scope` + `scope_category`/`scope_product_ids`.
+-- `min_order_value_cents`, quando definido, é o valor mínimo (em centavos)
+-- dos itens ELEGÍVEIS ao cupom (não do carrinho inteiro) para o desconto
+-- valer — ex: "cupom só vale se levar R$ 100 em bolsas".
+create table if not exists public.coupons (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  description text not null default '',
+  discount_type text not null check (discount_type in ('percentage', 'fixed')),
+  -- Para 'percentage': número inteiro de 1 a 100 (%).
+  -- Para 'fixed': valor em centavos, maior que zero.
+  discount_value integer not null check (discount_value > 0),
+  -- 'all' = aplica no subtotal inteiro do carrinho.
+  -- 'category' = aplica só nos itens da categoria em scope_category.
+  -- 'products' = aplica só nos itens cujo product_id está em scope_product_ids.
+  scope text not null default 'all' check (scope in ('all', 'category', 'products')),
+  scope_category text check (
+    scope_category is null or scope_category in
+      ('bolsas', 'necessaires', 'copos', 'lembrancinhas', 'chaveiros', 'outros')
+  ),
+  scope_product_ids uuid[] not null default '{}',
+  -- Valor mínimo (centavos) dos itens elegíveis para o cupom valer. NULL = sem mínimo.
+  min_order_value_cents integer check (min_order_value_cents is null or min_order_value_cents >= 0),
+  -- Limite de quantas vezes o cupom pode ser usado no total. NULL = ilimitado.
+  max_uses integer check (max_uses is null or max_uses > 0),
+  used_count integer not null default 0 check (used_count >= 0),
+  active boolean not null default true,
+  valid_from timestamptz,
+  valid_until timestamptz,
+  created_at timestamptz not null default now()
+);
+
+comment on table public.coupons is
+  'Cupons de desconto aplicáveis no checkout. Gerenciados em /admin/cupons.';
+comment on column public.coupons.discount_value is
+  'Percentual (1-100) se discount_type=percentage, ou centavos se discount_type=fixed.';
+comment on column public.coupons.min_order_value_cents is
+  'Valor mínimo, em centavos, dos itens elegíveis ao cupom (não do carrinho todo) para o desconto valer.';
+
+create index if not exists coupons_code_idx on public.coupons (upper(code));
+create index if not exists coupons_active_idx on public.coupons (active);
+
+alter table public.coupons enable row level security;
+
+-- Sem policy de leitura pública de propósito: se qualquer pessoa pudesse
+-- fazer SELECT * na tabela via anon key, ela listaria TODOS os códigos de
+-- cupom ativos (mesmo os que não foram divulgados), o que anula o
+-- propósito de um cupom "secreto". A validação de cupom no checkout roda
+-- em src/app/api/cupom/validar/route.ts usando a service_role key
+-- (createServiceRoleClient), que ignora RLS — o mesmo padrão já usado
+-- para consultar pedidos por código no webhook de pagamento.
+drop policy if exists "coupons_admin_manage" on public.coupons;
+create policy "coupons_admin_manage"
+  on public.coupons for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Incrementa o contador de uso do cupom de forma atômica (evita race
+-- condition de dois checkouts simultâneos lendo o mesmo used_count e
+-- sobrescrevendo um ao outro com um UPDATE ... SET used_count = X).
+-- security definer porque é chamada via service_role a partir do checkout
+-- público (sem sessão de admin) — ver src/lib/coupons.ts.
+create or replace function public.increment_coupon_usage(p_coupon_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.coupons set used_count = used_count + 1 where id = p_coupon_id;
+$$;
+
+-- Pedido carrega o cupom aplicado (se houve) e o desconto já calculado e
+-- validado no servidor — nunca confiamos em desconto calculado no client.
+alter table public.orders add column if not exists coupon_code text;
+alter table public.orders add column if not exists discount_cents integer not null default 0;
+alter table public.orders drop constraint if exists orders_discount_cents_check;
+alter table public.orders add constraint orders_discount_cents_check
+  check (discount_cents >= 0);
+
+-- ============================================================================
 -- 5. STORAGE — bucket público para fotos dos produtos
 -- ============================================================================
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

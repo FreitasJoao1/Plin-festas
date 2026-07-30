@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { LayoutDashboard, Package, ClipboardList, CalendarDays, ArrowLeft, LayoutTemplate } from "lucide-react";
+import { LayoutDashboard, Package, ClipboardList, CalendarDays, ArrowLeft, LayoutTemplate, Tag } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import PlinLogo from "@/components/PlinLogo";
@@ -11,6 +11,7 @@ export const metadata = { title: "Admin — Plin Designs" };
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/produtos", label: "Produtos", icon: Package },
+  { href: "/admin/cupons", label: "Cupons", icon: Tag },
   { href: "/admin/pedidos", label: "Pedidos", icon: ClipboardList },
   { href: "/admin/agenda", label: "Agenda", icon: CalendarDays },
   { href: "/admin/site", label: "Site", icon: LayoutTemplate },

@@ -83,6 +83,12 @@ export default async function AdminOrderDetailPage({
               <span>Subtotal</span>
               <span>{formatBRL(order.subtotal_cents)}</span>
             </div>
+            {order.discount_cents > 0 && (
+              <div className="flex justify-between text-green-600">
+                <span>Cupom {order.coupon_code ? `(${order.coupon_code})` : ""}</span>
+                <span>-{formatBRL(order.discount_cents)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-ink-soft">
               <span>
                 Frete ({SHIPPING_METHOD_LABELS[order.shipping_method]}

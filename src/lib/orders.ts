@@ -10,6 +10,10 @@ export interface CreateOrderInput {
   customer_phone: string;
   items: OrderItem[];
   subtotal_cents: number;
+  /** Código do cupom já validado no servidor, ou null se nenhum foi usado. */
+  coupon_code: string | null;
+  /** Desconto em centavos já validado no servidor. */
+  discount_cents: number;
   shipping_method: ShippingMethod;
   shipping_city: DeliveryCity | null;
   shipping_cents: number;
@@ -50,6 +54,8 @@ export async function createOrder(
       customer_phone: input.customer_phone,
       items: input.items,
       subtotal_cents: input.subtotal_cents,
+      coupon_code: input.coupon_code,
+      discount_cents: input.discount_cents,
       shipping_method: input.shipping_method,
       shipping_city: input.shipping_city,
       shipping_cents: input.shipping_cents,

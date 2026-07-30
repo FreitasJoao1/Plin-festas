@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { MessageCircle, CreditCard } from "lucide-react";
+import { MessageCircle, CreditCard, Tag, X, Loader2 } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
@@ -44,6 +44,73 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [paymentAvailable, setPaymentAvailable] = useState(false);
 
+  // Cupom de desconto ───────────────────────────────────────────────────
+  const [couponInput, setCouponInput] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    description: string;
+    discountCents: number;
+    /** "assinatura" do carrinho no momento em que o cupom foi aplicado — se o carrinho mudar, o cupom precisa ser reaplicado. */
+    cartSignature: string;
+  } | null>(null);
+
+  const cartSignature = useMemo(
+    () => items.map((i) => `${i.product_id}:${i.quantity}`).sort().join("|"),
+    [items]
+  );
+
+  // Se o carrinho mudar depois do cupom aplicado (item removido, quantidade
+  // alterada), o desconto guardado pode não valer mais — remove e pede pra
+  // reaplicar, em vez de mostrar um valor desatualizado.
+  useEffect(() => {
+    if (appliedCoupon && appliedCoupon.cartSignature !== cartSignature) {
+      setAppliedCoupon(null);
+      setCouponError("O carrinho mudou — aplique o cupom novamente.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartSignature]);
+
+  const handleApplyCoupon = useCallback(async () => {
+    const code = couponInput.trim();
+    if (!code) return;
+    setCouponLoading(true);
+    setCouponError(null);
+    try {
+      const res = await fetch("/api/cupom/validar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          cartItems: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.valid) {
+        setCouponError(data.error ?? "Cupom inválido.");
+        setAppliedCoupon(null);
+        return;
+      }
+      setAppliedCoupon({
+        code: data.code,
+        description: data.description,
+        discountCents: data.discountCents,
+        cartSignature,
+      });
+      setCouponInput("");
+    } catch {
+      setCouponError("Erro de conexão. Tente novamente.");
+    } finally {
+      setCouponLoading(false);
+    }
+  }, [couponInput, items, cartSignature]);
+
+  const handleRemoveCoupon = useCallback(() => {
+    setAppliedCoupon(null);
+    setCouponError(null);
+  }, []);
+
   useEffect(() => {
     fetch("/api/pagamento/config")
       .then((r) => r.json())
@@ -77,7 +144,8 @@ export default function CheckoutPage() {
   }, []);
 
   const shippingCharged = shipping.manual ? 0 : shipping.price_cents;
-  const total = subtotalCents() + shippingCharged;
+  const discountCents = appliedCoupon?.discountCents ?? 0;
+  const total = Math.max(0, subtotalCents() - discountCents) + shippingCharged;
 
   const orderItems = useMemo(
     () => items.map((i) => ({
@@ -107,6 +175,7 @@ export default function CheckoutPage() {
           shipping: { method: shipping.method, city: shipping.city, cep: shipping.cep },
           note: note.trim() || undefined,
           bookingDate: bookingDate ?? undefined,
+          couponCode: appliedCoupon?.code || undefined,
         }),
       });
 
@@ -116,7 +185,9 @@ export default function CheckoutPage() {
         return null;
       }
 
-      // Monta objeto Order mínimo para gerar a URL do WhatsApp
+      // Monta objeto Order mínimo para gerar a URL do WhatsApp — usa o
+      // desconto/cupom devolvidos pelo servidor (autoridade final), não o
+      // estado local, que é só um preview.
       const order: Order = {
         id: data.orderId,
         order_code: data.orderCode,
@@ -125,11 +196,13 @@ export default function CheckoutPage() {
         customer_phone: phone.trim(),
         customer_email: email.trim(),
         items: orderItems,
-        subtotal_cents: subtotalCents(),
+        subtotal_cents: data.subtotal_cents ?? subtotalCents(),
+        coupon_code: data.coupon_code ?? null,
+        discount_cents: data.discount_cents ?? 0,
         shipping_method: shipping.method as ShippingMethod,
         shipping_city: (shipping.city as DeliveryCity) ?? null,
         shipping_cents: shippingCharged,
-        total_cents: total,
+        total_cents: data.total_cents ?? total,
         status: "novo",
         note: note.trim() || null,
         booking_date: bookingDate,
@@ -248,6 +321,56 @@ export default function CheckoutPage() {
         </section>
 
         <section>
+          <h2 className="font-display text-xl text-ink">Cupom de desconto</h2>
+          {appliedCoupon ? (
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-green-200 bg-green-50 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm text-green-800">
+                <Tag className="h-4 w-4 flex-shrink-0" />
+                <span>
+                  <strong>{appliedCoupon.code}</strong> aplicado — desconto de{" "}
+                  {formatBRL(appliedCoupon.discountCents)}
+                  {appliedCoupon.description ? ` (${appliedCoupon.description})` : ""}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRemoveCoupon}
+                className="flex-shrink-0 rounded-full p-1.5 text-green-700 transition-colors hover:bg-green-100"
+                aria-label="Remover cupom"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="mt-4 flex gap-2">
+              <input
+                value={couponInput}
+                onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleApplyCoupon();
+                  }
+                }}
+                placeholder="Código do cupom"
+                className="flex-1 rounded-2xl border border-pink-200 px-4 py-3 uppercase outline-none transition-colors focus:border-pink-500"
+              />
+              <button
+                type="button"
+                onClick={handleApplyCoupon}
+                disabled={couponLoading || !couponInput.trim()}
+                className="flex flex-shrink-0 items-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-ink/80 disabled:opacity-50"
+              >
+                {couponLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Aplicar"}
+              </button>
+            </div>
+          )}
+          {couponError && (
+            <p className="mt-2 text-sm text-pink-600">{couponError}</p>
+          )}
+        </section>
+
+        <section>
           <h2 className="font-display text-xl text-ink">Data desejada (opcional)</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Escolha a data do seu evento ou entrega. Semanas muito cheias
@@ -327,6 +450,12 @@ export default function CheckoutPage() {
             <span>Subtotal</span>
             <span>{formatBRL(subtotalCents())}</span>
           </div>
+          {discountCents > 0 && (
+            <div className="flex justify-between text-green-600">
+              <span>Cupom ({appliedCoupon?.code})</span>
+              <span>-{formatBRL(discountCents)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-ink-soft">
             <span>Frete ({shipping.label})</span>
             <span>{shipping.manual ? "a combinar" : formatBRL(shippingCharged)}</span>

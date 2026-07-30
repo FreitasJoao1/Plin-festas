@@ -40,6 +40,9 @@ export function buildWhatsAppMessage(order: Order): string {
     `   Frete: ${shipping}`,
     ``,
     `💰 *Subtotal:* ${formatBRL(order.subtotal_cents)}`,
+    order.discount_cents > 0
+      ? `🏷️ *Cupom ${order.coupon_code}:* -${formatBRL(order.discount_cents)}`
+      : "",
     `💰 *Total:* ${formatBRL(order.total_cents)}`,
     order.note ? `\n📝 *Obs:* ${order.note}` : "",
     order.booking_date
