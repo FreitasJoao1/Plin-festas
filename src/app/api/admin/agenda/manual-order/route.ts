@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
       customer_phone: (body.customer_phone ?? "").trim().slice(0, 30),
       items,
       subtotal_cents,
+      coupon_code: null,
+      discount_cents: 0,
       shipping_method: body.shipping_method,
       shipping_city: body.shipping_city ?? null,
       shipping_cents: shippingCents,
