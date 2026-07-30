@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { MessageCircle, CreditCard, Tag, X, Loader2 } from "lucide-react";
+import { MessageCircle, CreditCard, Tag, X, Loader2, ChevronDown } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
@@ -143,6 +143,11 @@ export default function CheckoutPage() {
     setVisibleWeekStart((w) => addDays(w, direction * 7));
   }, []);
 
+  // Termos de criação da arte — o cliente precisa confirmar que está
+  // ciente do fluxo de aprovação antes de poder finalizar o pedido.
+  const [agreedToArtTerms, setAgreedToArtTerms] = useState(false);
+  const [showArtDetails, setShowArtDetails] = useState(false);
+
   const shippingCharged = shipping.manual ? 0 : shipping.price_cents;
   const discountCents = appliedCoupon?.discountCents ?? 0;
   const total = Math.max(0, subtotalCents() - discountCents) + shippingCharged;
@@ -229,21 +234,21 @@ export default function CheckoutPage() {
 
   // Confirmação instantânea via WhatsApp ──────────────────────────────────
   const handleConfirm = useCallback(() => {
-    if (loading || payingOnline) return;
+    if (loading || payingOnline || !agreedToArtTerms) return;
     submitOrder().then((order) => {
       if (order) {
         clear();
         window.location.href = buildWhatsAppUrl(order);
       }
     });
-  }, [loading, payingOnline, name, email, phone, note, shipping, items]); // eslint-disable-line
+  }, [loading, payingOnline, agreedToArtTerms, name, email, phone, note, shipping, items]); // eslint-disable-line
 
   // Pagamento online opcional via InfinitePay — cria o pedido igual ao
   // fluxo do WhatsApp, mas em vez de ir pro wa.me, gera um link de
   // pagamento hospedado e redireciona pra lá. O carrinho só é limpo
   // depois que o pedido foi criado com sucesso (mesma lógica do WhatsApp).
   const handlePayOnline = useCallback(async () => {
-    if (loading || payingOnline) return;
+    if (loading || payingOnline || !agreedToArtTerms) return;
     setPayingOnline(true);
     try {
       const order = await submitOrder();
@@ -261,7 +266,7 @@ export default function CheckoutPage() {
     } finally {
       setPayingOnline(false);
     }
-  }, [loading, payingOnline, name, email, phone, note, shipping, items]); // eslint-disable-line
+  }, [loading, payingOnline, agreedToArtTerms, name, email, phone, note, shipping, items]); // eslint-disable-line
 
   if (items.length === 0) {
     return (
@@ -388,15 +393,59 @@ export default function CheckoutPage() {
             />
           </div>
           <p className="mt-3 rounded-2xl bg-babyblue-100 px-4 py-3 text-sm text-ink">
-            ⚠️ <strong>Importante:</strong> pedidos com data marcada estão
-            sujeitos à confirmação de agenda pela loja. Caso não possamos
-            atender na data solicitada
-            {bookingDate
-              ? ` (${new Date(bookingDate + "T12:00:00").toLocaleDateString("pt-BR")})`
-              : ""}
-            , entraremos em contato via WhatsApp para propor uma nova data
-            ou realizar o estorno integral.
+            ⚠️ Data sujeita à confirmação da loja. Fora da disponibilidade
+            padrão, pode ser feito encaixe mediante taxa adicional de 10%
+            sobre o valor do pedido — combinamos tudo pelo WhatsApp.
           </p>
+        </section>
+
+        <section>
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-pink-200 bg-pink-50/50 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={agreedToArtTerms}
+              onChange={(e) => setAgreedToArtTerms(e.target.checked)}
+              className="mt-0.5 h-5 w-5 flex-shrink-0 accent-pink-500"
+            />
+            <span className="text-sm text-ink">
+              Li e concordo que a arte será enviada para aprovação antes
+              do início da produção.{" "}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowArtDetails((v) => !v);
+                }}
+                className="inline-flex items-center gap-1 font-semibold text-pink-600 underline underline-offset-2 hover:text-pink-700"
+              >
+                Ver detalhes
+                <ChevronDown
+                  className={`h-3.5 w-3.5 transition-transform ${showArtDetails ? "rotate-180" : ""}`}
+                />
+              </button>
+            </span>
+          </label>
+          {showArtDetails && (
+            <div className="mt-2 flex flex-col gap-3 rounded-2xl bg-white px-4 py-3 text-sm text-ink-soft ring-1 ring-pink-100">
+              <div>
+                <p className="font-semibold text-ink">🎨 Criação da arte</p>
+                <p className="mt-1">
+                  Após a confirmação do pedido, nossa equipe entrará em
+                  contato para iniciar a criação da sua arte.
+                  Solicitaremos uma imagem de inspiração como referência e
+                  enviaremos o layout para aprovação até 5 dias antes da
+                  data de entrega.
+                </p>
+              </div>
+              <div>
+                <p className="font-semibold text-ink">✅ Produção</p>
+                <p className="mt-1">
+                  A produção será iniciada somente após a aprovação da
+                  arte pelo cliente.
+                </p>
+              </div>
+            </div>
+          )}
         </section>
 
         {error && (
@@ -410,7 +459,7 @@ export default function CheckoutPage() {
           {paymentAvailable && (
             <button
               onClick={handlePayOnline}
-              disabled={loading || payingOnline}
+              disabled={loading || payingOnline || !agreedToArtTerms}
               className="flex w-full items-center justify-center gap-3 rounded-full bg-lilac-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-lilac-600 disabled:opacity-60"
             >
               <CreditCard className="h-5 w-5" />
@@ -419,12 +468,17 @@ export default function CheckoutPage() {
           )}
           <button
             onClick={handleConfirm}
-            disabled={loading || payingOnline}
+            disabled={loading || payingOnline || !agreedToArtTerms}
             className="flex w-full items-center justify-center gap-3 rounded-full bg-green-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-green-600 disabled:opacity-60"
           >
             <MessageCircle className="h-5 w-5" />
             {loading ? "Processando…" : `Finalizar via WhatsApp — ${formatBRL(total)}`}
           </button>
+          {!agreedToArtTerms && (
+            <p className="text-center text-xs text-pink-600">
+              Marque a caixa acima para liberar a finalização do pedido.
+            </p>
+          )}
           {paymentAvailable && (
             <p className="text-center text-xs text-ink-soft">
               O pagamento fica registrado no seu pedido — a loja ainda
