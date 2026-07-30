@@ -73,6 +73,33 @@ export async function createOrder(
   // erro do Postgres, não como exceção JS, então precisa ser repassado
   // como resultado de negócio, não relançado como erro genérico 500.
   if (error) {
+    // Código 42501 = "insufficient_privilege", a forma como o Postgres
+    // reporta uma violação de Row Level Security ("new row violates
+    // row-level security policy for table ..."). A policy
+    // `orders_insert_anyone` (supabase/schema.sql) libera insert para
+    // QUALQUER pessoa, logada ou não — então, se este erro aparecer, não é
+    // porque o cliente não estava logado nem porque caiu no pedido mínimo
+    // (isso já é barrado antes, com mensagem própria, em
+    // src/app/api/checkout/route.ts). É sinal de que o banco Supabase em
+    // uso está com as policies desatualizadas em relação a este arquivo —
+    // normalmente porque supabase/schema.sql ainda não foi rodado (ou foi
+    // rodado antes desta policy existir) no projeto Supabase real. Nunca
+    // mostramos esse erro técnico cru pro cliente final.
+    if (error.code === "42501") {
+      console.error(
+        "[createOrder] Violação de RLS ao inserir pedido — as policies do banco " +
+          "provavelmente estão desatualizadas. Rode supabase/schema.sql inteiro " +
+          "no SQL Editor do Supabase para sincronizar. Detalhe original:",
+        error.message
+      );
+      return {
+        ok: false,
+        error:
+          "Não foi possível registrar seu pedido por um problema técnico " +
+          "temporário na loja. Por favor, tente novamente em instantes ou " +
+          "fale com a gente pelo WhatsApp.",
+      };
+    }
     return { ok: false, error: error.message };
   }
   return { ok: true, id: data.id, order_code: data.order_code };
@@ -214,13 +241,13 @@ export async function updateOrderStatus(
 
 export async function getBookingSettings(): Promise<BookingSettings> {
   const supabase = await createClient();
-  if (!supabase) return { weekly_capacity: 20, horizon_days: 60 };
+  if (!supabase) return { weekly_capacity: 20, horizon_days: 180 };
   const { data, error } = await supabase
     .from("booking_settings")
     .select("weekly_capacity, horizon_days")
     .eq("id", 1)
     .single();
-  if (error || !data) return { weekly_capacity: 20, horizon_days: 60 };
+  if (error || !data) return { weekly_capacity: 20, horizon_days: 180 };
   return data;
 }
 

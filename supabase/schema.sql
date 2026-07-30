@@ -370,9 +370,16 @@ create trigger orders_client_cancel_guard
 create table if not exists public.booking_settings (
   id integer primary key default 1 check (id = 1),
   weekly_capacity integer not null default 20 check (weekly_capacity > 0),
-  horizon_days integer not null default 60 check (horizon_days > 0)
+  horizon_days integer not null default 180 check (horizon_days > 0)
 );
 insert into public.booking_settings (id) values (1) on conflict (id) do nothing;
+
+-- Garante que uma linha já existente (criada antes desta atualização, com
+-- o valor antigo de 60 dias) também passa a usar o novo horizonte de 180
+-- dias. Sem este UPDATE, só bancos novos ganhariam o valor — bancos que já
+-- rodaram o schema.sql antes ficariam presos em 60 pelo "on conflict do
+-- nothing" acima.
+update public.booking_settings set horizon_days = 180 where id = 1 and horizon_days = 60;
 
 alter table public.booking_settings enable row level security;
 drop policy if exists "booking_settings_public_read" on public.booking_settings;

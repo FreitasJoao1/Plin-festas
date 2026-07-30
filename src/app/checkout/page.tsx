@@ -122,7 +122,7 @@ export default function CheckoutPage() {
   const [bookingDate, setBookingDate] = useState<string | null>(null);
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => mondayOf(today));
   const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
-  const [horizonDays, setHorizonDays] = useState(60);
+  const [horizonDays, setHorizonDays] = useState(180);
 
   useEffect(() => {
     const start = visibleWeekStart;

@@ -53,7 +53,7 @@ export default function AdminAgendaPage() {
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => mondayOf(today));
   const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
   const [dayStatusOverrides, setDayStatusOverrides] = useState<DayStatusOverrideData[]>([]);
-  const [horizonDays, setHorizonDays] = useState(60);
+  const [horizonDays, setHorizonDays] = useState(180);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
