@@ -9,6 +9,7 @@ import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types"
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import ShippingSelector from "@/components/ShippingSelector";
 import BookingCalendar, { WeekOccupancyData } from "@/components/BookingCalendar";
+import { SPLIT_PAYMENT_MIN_CENTS, isSplitPaymentEligible } from "@/lib/split-payment";
 
 function mondayOf(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
@@ -152,6 +153,16 @@ export default function CheckoutPage() {
   const shippingCharged = shipping.manual ? 0 : shipping.price_cents;
   const discountCents = appliedCoupon?.discountCents ?? 0;
   const total = Math.max(0, subtotalCents() - discountCents) + shippingCharged;
+  const splitEligible = isSplitPaymentEligible(total);
+
+  // Se o total cair abaixo do mínimo (cupom aplicado, item removido etc.)
+  // enquanto "50/50" estava selecionado, volta pro pagamento integral —
+  // não deixa o plano ficar selecionado mas inacessível.
+  useEffect(() => {
+    if (!splitEligible && paymentPlan === "split_50_50") {
+      setPaymentPlan("full");
+    }
+  }, [splitEligible, paymentPlan]);
 
   const orderItems = useMemo(
     () => items.map((i) => ({
@@ -482,16 +493,22 @@ export default function CheckoutPage() {
             </button>
             <button
               type="button"
-              onClick={() => setPaymentPlan("split_50_50")}
+              onClick={() => splitEligible && setPaymentPlan("split_50_50")}
+              disabled={!splitEligible}
+              title={!splitEligible ? `Disponível a partir de ${formatBRL(SPLIT_PAYMENT_MIN_CENTS)}` : undefined}
               className={`rounded-xl border px-4 py-2.5 text-left text-sm transition-colors ${
-                paymentPlan === "split_50_50"
-                  ? "border-pink-500 bg-pink-50 text-ink"
-                  : "border-pink-100 text-ink-soft hover:border-pink-200"
+                !splitEligible
+                  ? "cursor-not-allowed border-pink-50 text-ink-soft/50"
+                  : paymentPlan === "split_50_50"
+                    ? "border-pink-500 bg-pink-50 text-ink"
+                    : "border-pink-100 text-ink-soft hover:border-pink-200"
               }`}
             >
               <span className="font-semibold">50% agora + 50% na entrega</span>
               <span className="block text-xs">
-                {formatBRL(Math.round(total / 2))} agora, restante na entrega
+                {splitEligible
+                  ? `${formatBRL(Math.round(total / 2))} agora, restante na entrega`
+                  : `Disponível a partir de ${formatBRL(SPLIT_PAYMENT_MIN_CENTS)}`}
               </span>
             </button>
           </div>

@@ -14,12 +14,35 @@ function parseMoneyToCents(value: string): number | null {
   return Number.isNaN(parsed) ? null : Math.round(parsed * 100);
 }
 
-/** Converte um timestamptz do Postgres (ISO) pro formato do <input type="datetime-local">. */
-function toDatetimeLocal(iso: string | null): string {
+/**
+ * Datas de cupom são só "dia" (sem hora) — pra evitar o bug de fuso onde
+ * um <input type="datetime-local"> compara o horário exato do navegador
+ * contra o horário exato salvo no banco, e "hoje" vira "ainda não válido"
+ * dependendo da hora/fuso de quem cria o cupom. Aqui sempre fixamos
+ * horário de Brasília (-03:00): início do dia para valid_from, fim do dia
+ * para valid_until — assim "início hoje" sempre significa 00:00 de hoje
+ * no Brasil, não 00:00 UTC (que pode cair ainda no dia anterior aqui).
+ */
+const BRAZIL_OFFSET = "-03:00";
+
+function toDateOnly(iso: string | null): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  // O valor já foi salvo como "00:00-03:00" ou "23:59:59-03:00" (ver
+  // buildValidFromIso/buildValidUntilIso), então os 10 primeiros
+  // caracteres do ISO já são o dia certo em horário de Brasília — não
+  // precisa (e não deve) passar por new Date(), que reconverteria pro
+  // fuso do navegador e poderia voltar um dia.
+  return iso.slice(0, 10);
+}
+
+function buildValidFromIso(dateOnly: string): string | null {
+  if (!dateOnly) return null;
+  return `${dateOnly}T00:00:00${BRAZIL_OFFSET}`;
+}
+
+function buildValidUntilIso(dateOnly: string): string | null {
+  if (!dateOnly) return null;
+  return `${dateOnly}T23:59:59${BRAZIL_OFFSET}`;
 }
 
 export default function CouponForm({
@@ -57,8 +80,8 @@ export default function CouponForm({
       : ""
   );
   const [maxUses, setMaxUses] = useState(coupon?.max_uses ? String(coupon.max_uses) : "");
-  const [validFrom, setValidFrom] = useState(toDatetimeLocal(coupon?.valid_from ?? null));
-  const [validUntil, setValidUntil] = useState(toDatetimeLocal(coupon?.valid_until ?? null));
+  const [validFrom, setValidFrom] = useState(toDateOnly(coupon?.valid_from ?? null));
+  const [validUntil, setValidUntil] = useState(toDateOnly(coupon?.valid_until ?? null));
   const [active, setActive] = useState(coupon?.active ?? true);
 
   const [submitting, setSubmitting] = useState(false);
@@ -125,8 +148,8 @@ export default function CouponForm({
       min_order_value_cents: minOrderValueParsed,
       max_uses: maxUsesParsed,
       active,
-      valid_from: validFrom ? new Date(validFrom).toISOString() : null,
-      valid_until: validUntil ? new Date(validUntil).toISOString() : null,
+      valid_from: buildValidFromIso(validFrom),
+      valid_until: buildValidUntilIso(validUntil),
     };
 
     setSubmitting(true);
@@ -335,7 +358,7 @@ export default function CouponForm({
             Válido a partir de (opcional)
           </label>
           <input
-            type="datetime-local"
+            type="date"
             value={validFrom}
             onChange={(e) => setValidFrom(e.target.value)}
             className="w-full rounded-xl border border-pink-200 px-4 py-2.5 outline-none focus:border-pink-500"
@@ -347,7 +370,7 @@ export default function CouponForm({
             Válido até (opcional)
           </label>
           <input
-            type="datetime-local"
+            type="date"
             value={validUntil}
             onChange={(e) => setValidUntil(e.target.value)}
             className="w-full rounded-xl border border-pink-200 px-4 py-2.5 outline-none focus:border-pink-500"

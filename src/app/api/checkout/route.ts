@@ -6,6 +6,7 @@ import { createOrder } from "@/lib/orders";
 import { generateOrderCode } from "@/lib/order-code";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { validateCoupon, incrementCouponUsage } from "@/lib/coupons";
+import { isSplitPaymentEligible } from "@/lib/split-payment";
 import { DeliveryCity, OrderItem, ShippingMethod } from "@/lib/types";
 
 interface CheckoutBody {
@@ -195,7 +196,12 @@ export async function POST(req: NextRequest) {
   // balance = total - deposit (em vez de total/2 pros dois), pra sempre
   // somar exatamente o total mesmo com centavo ímpar (ex: total 1001 ->
   // depósito 501 + saldo 500, nunca "sobra"/"falta" 1 centavo).
-  const payment_plan = body.paymentPlan === "split_50_50" ? "split_50_50" : "full";
+  // Mesma regra do checkout (src/lib/split-payment.ts) aplicada aqui como
+  // autoridade final — nunca confia que o client respeitou o mínimo.
+  const payment_plan =
+    body.paymentPlan === "split_50_50" && isSplitPaymentEligible(total_cents)
+      ? "split_50_50"
+      : "full";
   const deposit_amount_cents = payment_plan === "split_50_50" ? Math.round(total_cents / 2) : 0;
   const balance_amount_cents = payment_plan === "split_50_50" ? total_cents - deposit_amount_cents : 0;
 
