@@ -116,8 +116,41 @@ create table if not exists public.orders (
   infinitepay_transaction_nsu text,
   infinitepay_invoice_slug text,
   infinitepay_paid_amount_cents integer,
+  -- Pagamento fracionado 50/50: 'full' = cobra tudo de uma vez (fluxo
+  -- original, continua usando só os campos payment_status/payment_method/
+  -- infinitepay_* acima). 'split_50_50' = deposit_amount_cents (sinal, os
+  -- primeiros 50%) usa esses MESMOS campos — compatibilidade total com o
+  -- fluxo já existente; o saldo (balance_amount_cents, os outros 50%,
+  -- cobrado na entrega) usa os campos balance_* abaixo, espelhando os
+  -- mesmos nomes/semântica.
+  payment_plan text not null default 'full' check (payment_plan in ('full', 'split_50_50')),
+  deposit_amount_cents integer not null default 0 check (deposit_amount_cents >= 0),
+  balance_amount_cents integer not null default 0 check (balance_amount_cents >= 0),
+  balance_payment_status text not null default 'none' check (
+    balance_payment_status in ('none', 'pending', 'paid', 'failed')
+  ),
+  balance_payment_method text check (balance_payment_method in ('pix', 'credit_card')),
+  balance_infinitepay_transaction_nsu text,
+  balance_infinitepay_invoice_slug text,
+  balance_infinitepay_paid_amount_cents integer,
   created_at timestamptz not null default now()
 );
+
+-- Migração para bancos que já existiam antes do pagamento fracionado —
+-- "add column if not exists" é seguro de rodar de novo.
+alter table public.orders add column if not exists payment_plan text not null default 'full';
+alter table public.orders drop constraint if exists orders_payment_plan_check;
+alter table public.orders add constraint orders_payment_plan_check check (payment_plan in ('full', 'split_50_50'));
+alter table public.orders add column if not exists deposit_amount_cents integer not null default 0;
+alter table public.orders add column if not exists balance_amount_cents integer not null default 0;
+alter table public.orders add column if not exists balance_payment_status text not null default 'none';
+alter table public.orders drop constraint if exists orders_balance_payment_status_check;
+alter table public.orders add constraint orders_balance_payment_status_check
+  check (balance_payment_status in ('none', 'pending', 'paid', 'failed'));
+alter table public.orders add column if not exists balance_payment_method text;
+alter table public.orders add column if not exists balance_infinitepay_transaction_nsu text;
+alter table public.orders add column if not exists balance_infinitepay_invoice_slug text;
+alter table public.orders add column if not exists balance_infinitepay_paid_amount_cents integer;
 
 -- IMPORTANTE: "create table if not exists" acima só roda se a tabela
 -- ainda não existir — se `orders` já existia de uma versão anterior do
@@ -666,6 +699,27 @@ create policy "coupons_admin_manage"
 -- sobrescrevendo um ao outro com um UPDATE ... SET used_count = X).
 -- security definer porque é chamada via service_role a partir do checkout
 -- público (sem sessão de admin) — ver src/lib/coupons.ts.
+-- Busca um cupom pelo código, ignorando RLS — usada pelo checkout público
+-- (src/lib/coupons.ts::validateCoupon) via o cliente normal (anon/RLS),
+-- SEM precisar da service_role key. Isso evita que a validação de cupom
+-- inteira dependa de SUPABASE_SERVICE_ROLE_KEY estar configurada no
+-- ambiente de deploy — se essa variável faltar ou for perdida numa nova
+-- implantação, os cupons continuam funcionando normalmente.
+-- Não é um risco de segurança maior que a policy que já existia: mesmo
+-- sem esta função, um SELECT direto exigiria service_role (que também
+-- ignora RLS); aqui só trocamos "chave secreta no servidor" por "função
+-- restrita no banco", sem abrir listagem (a função exige o código exato,
+-- não permite dar SELECT * na tabela toda).
+create or replace function public.get_coupon_by_code(p_code text)
+returns setof public.coupons
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select * from public.coupons where code = upper(trim(p_code));
+$$;
+
 create or replace function public.increment_coupon_usage(p_coupon_id uuid)
 returns void
 language sql

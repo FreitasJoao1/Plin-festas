@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrderById } from "@/lib/orders";
-import { checkPayment } from "@/lib/infinitepay";
-import { markPaymentConfirmed } from "@/lib/orders";
+import { checkPayment, isBalanceNsu, BALANCE_NSU_SUFFIX } from "@/lib/infinitepay";
+import { markPaymentConfirmed, markBalancePaymentConfirmed } from "@/lib/orders";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -30,25 +30,52 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Pedido não encontrado." }, { status: 404 });
   }
 
-  if (order.payment_status === "paid") {
-    return NextResponse.json({ payment_status: "paid", order_code: order.order_code });
+  if (order.payment_status === "paid" && (order.payment_plan !== "split_50_50" || order.balance_payment_status !== "pending")) {
+    return NextResponse.json({
+      payment_status: "paid",
+      order_code: order.order_code,
+      payment_plan: order.payment_plan,
+      balance_payment_status: order.balance_payment_status,
+    });
   }
 
   // Webhook pode não ter chegado ainda — se temos slug+transaction_nsu
   // do redirect, confirma agora mesmo (server-to-server) em vez de fazer
-  // o cliente ficar recarregando a página.
+  // o cliente ficar recarregando a página. O NSU usado no redirect diz
+  // se é o sinal/integral ou o saldo (sufixo -SALDO).
   if (slug && transactionNsu) {
-    const confirmation = await checkPayment(order.order_code, transactionNsu, slug);
+    const isBalance = searchParams.get("leg") === "balance";
+    const orderNsu = isBalance ? `${order.order_code}${BALANCE_NSU_SUFFIX}` : order.order_code;
+    const confirmation = await checkPayment(orderNsu, transactionNsu, slug);
     if (confirmation?.success && confirmation.paid) {
-      await markPaymentConfirmed(order.order_code, {
-        transactionNsu,
-        invoiceSlug: slug,
-        paidAmountCents: confirmation.paidAmountCents ?? confirmation.amountCents ?? order.total_cents,
-        method: confirmation.captureMethod ?? "pix",
+      if (isBalance) {
+        await markBalancePaymentConfirmed(order.order_code, {
+          transactionNsu,
+          invoiceSlug: slug,
+          paidAmountCents: confirmation.paidAmountCents ?? confirmation.amountCents ?? order.balance_amount_cents,
+          method: confirmation.captureMethod ?? "pix",
+        });
+      } else {
+        await markPaymentConfirmed(order.order_code, {
+          transactionNsu,
+          invoiceSlug: slug,
+          paidAmountCents: confirmation.paidAmountCents ?? confirmation.amountCents ?? order.total_cents,
+          method: confirmation.captureMethod ?? "pix",
+        });
+      }
+      return NextResponse.json({
+        payment_status: isBalance ? order.payment_status : "paid",
+        balance_payment_status: isBalance ? "paid" : order.balance_payment_status,
+        order_code: order.order_code,
+        payment_plan: order.payment_plan,
       });
-      return NextResponse.json({ payment_status: "paid", order_code: order.order_code });
     }
   }
 
-  return NextResponse.json({ payment_status: order.payment_status, order_code: order.order_code });
+  return NextResponse.json({
+    payment_status: order.payment_status,
+    balance_payment_status: order.balance_payment_status,
+    order_code: order.order_code,
+    payment_plan: order.payment_plan,
+  });
 }

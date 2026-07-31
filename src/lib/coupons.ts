@@ -1,4 +1,4 @@
-import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { Coupon, CouponDiscountType, CouponScope, OrderItem, Product, ProductCategory } from "@/lib/types";
 
@@ -92,26 +92,36 @@ export async function validateCoupon(
     return { ok: false, error: "Cupons não estão disponíveis neste ambiente (modo demo)." };
   }
 
-  const supabase = createServiceRoleClient();
+  const supabase = await createClient();
   if (!supabase) {
-    return { ok: false, error: "Não foi possível validar o cupom no momento." };
+    return { ok: false, error: "Cupons não estão disponíveis neste ambiente (modo demo)." };
   }
 
-  const { data, error } = await supabase
-    .from("coupons")
-    .select("*")
-    .eq("code", code)
-    .maybeSingle();
+  // RPC security definer — funciona com o cliente normal (anon/RLS), sem
+  // depender de SUPABASE_SERVICE_ROLE_KEY. Ver get_coupon_by_code em
+  // supabase/schema.sql.
+  const { data, error } = await supabase.rpc("get_coupon_by_code", { p_code: code });
 
   if (error) {
-    console.error("Erro ao buscar cupom:", error.message);
-    return { ok: false, error: "Não foi possível validar o cupom no momento." };
+    console.error("Erro ao buscar cupom:", error.message, error.code);
+    // PGRST202/PGRST205 = função/tabela não encontrada no schema cache —
+    // sinal claro de que supabase/schema.sql ainda não foi rodado (ou está
+    // desatualizado) no projeto Supabase em uso, não um cupom inválido.
+    if (error.code === "PGRST202" || error.code === "PGRST205") {
+      return {
+        ok: false,
+        error:
+          "Cupons ainda não foram configurados neste banco. Rode supabase/schema.sql no SQL Editor do Supabase.",
+      };
+    }
+    return { ok: false, error: "Não foi possível validar o cupom no momento. Tente novamente." };
   }
-  if (!data) {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) {
     return { ok: false, error: "Cupom inválido ou inexistente." };
   }
 
-  const coupon = data as Coupon;
+  const coupon = row as Coupon;
 
   const validityError = isCouponCurrentlyValid(coupon, new Date());
   if (validityError) return { ok: false, error: validityError };
@@ -150,12 +160,12 @@ export async function validateCoupon(
 
 /**
  * Incrementa o contador de usos do cupom. Chamada depois que o pedido é
- * criado com sucesso (src/app/api/checkout/route.ts). Usa service_role
- * pelo mesmo motivo de validateCoupon — roda em contexto de checkout
- * público, sem sessão de admin.
+ * criado com sucesso (src/app/api/checkout/route.ts). RPC security
+ * definer — mesmo motivo de get_coupon_by_code: funciona com o cliente
+ * normal do checkout público, sem depender de service_role.
  */
 export async function incrementCouponUsage(couponId: string): Promise<void> {
-  const supabase = createServiceRoleClient();
+  const supabase = await createClient();
   if (!supabase) return;
   const { error } = await supabase.rpc("increment_coupon_usage", { p_coupon_id: couponId });
   if (error) {

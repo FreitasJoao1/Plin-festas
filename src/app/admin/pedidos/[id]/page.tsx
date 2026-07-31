@@ -4,6 +4,7 @@ import { formatBRL, SHIPPING_METHOD_LABELS, DELIVERY_CITY_LABELS } from "@/lib/s
 import OrderStatusBadge from "@/components/OrderStatusBadge";
 import OrderStatusForm from "@/components/admin/OrderStatusForm";
 import BookingApprovalPanel from "@/components/admin/BookingApprovalPanel";
+import BalancePaymentPanel from "@/components/admin/BalancePaymentPanel";
 import { MessageCircle } from "lucide-react";
 import { buildCustomerWhatsAppUrl } from "@/lib/whatsapp";
 
@@ -126,6 +127,8 @@ export default async function AdminOrderDetailPage({
             </div>
           </div>
         )}
+
+        <BalancePaymentPanel order={order} />
 
         {/* Observação */}
         {order.note && (

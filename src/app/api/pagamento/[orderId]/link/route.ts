@@ -41,10 +41,28 @@ export async function POST(
     return NextResponse.json({ error: "Este pedido já foi pago." }, { status: 409 });
   }
 
+  // Pagamento fracionado 50/50: o link gerado aqui (checkout) é sempre o
+  // do SINAL — cobra só deposit_amount_cents, via um item sintético único
+  // em vez do carrinho real, pra não cobrar o valor cheio por engano. O
+  // link do SALDO (os outros 50%, na entrega) é gerado depois, separado,
+  // por /api/admin/pedidos/[id]/link-saldo — ver esse arquivo.
+  const isSplit = order.payment_plan === "split_50_50";
+  const linkItems = isSplit
+    ? [
+        {
+          product_id: "sinal",
+          name: `Sinal (50%) — Pedido ${order.order_code}`,
+          unit_price_cents: order.deposit_amount_cents,
+          quantity: 1,
+        },
+      ]
+    : order.items;
+  const linkShippingCents = isSplit ? 0 : order.shipping_cents;
+
   const result = await createPaymentLink({
     orderNsu: order.order_code,
-    items: order.items,
-    shippingCents: order.shipping_cents,
+    items: linkItems,
+    shippingCents: linkShippingCents,
     redirectUrl: `${SITE_URL}/checkout/pagamento?order=${order.id}`,
     webhookUrl: `${SITE_URL}/api/pagamento/webhook`,
     customer: {

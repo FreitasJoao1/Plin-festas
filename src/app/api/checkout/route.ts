@@ -17,6 +17,8 @@ interface CheckoutBody {
   bookingDate?: string;
   /** Código do cupom de desconto aplicado no checkout, se houver. */
   couponCode?: string;
+  /** 'full' (padrão) ou 'split_50_50' — 50% agora (sinal) + 50% na entrega. */
+  paymentPlan?: "full" | "split_50_50";
 }
 
 const VALID_SHIPPING_METHODS: ShippingMethod[] = [
@@ -77,6 +79,12 @@ function validate(body: unknown): body is CheckoutBody {
   }
 
   if (b.couponCode !== undefined && typeof b.couponCode !== "string") return false;
+
+  if (
+    b.paymentPlan !== undefined &&
+    b.paymentPlan !== "full" &&
+    b.paymentPlan !== "split_50_50"
+  ) return false;
 
   return true;
 }
@@ -182,6 +190,15 @@ export async function POST(req: NextRequest) {
   const shipping_cents = shippingQuote.manual ? 0 : shippingQuote.price_cents;
   const total_cents = Math.max(0, subtotal_cents - discount_cents) + shipping_cents;
 
+  // Pagamento fracionado 50/50 — calculado aqui, no servidor, sobre o
+  // total_cents já recalculado (nunca sobre algo vindo do client).
+  // balance = total - deposit (em vez de total/2 pros dois), pra sempre
+  // somar exatamente o total mesmo com centavo ímpar (ex: total 1001 ->
+  // depósito 501 + saldo 500, nunca "sobra"/"falta" 1 centavo).
+  const payment_plan = body.paymentPlan === "split_50_50" ? "split_50_50" : "full";
+  const deposit_amount_cents = payment_plan === "split_50_50" ? Math.round(total_cents / 2) : 0;
+  const balance_amount_cents = payment_plan === "split_50_50" ? total_cents - deposit_amount_cents : 0;
+
   try {
     // Pequeno retry caso o código gerado colida (extremamente raro —
     // ver src/lib/order-code.ts para a probabilidade).
@@ -203,6 +220,9 @@ export async function POST(req: NextRequest) {
           total_cents,
           note: note || null,
           booking_date: body.bookingDate ?? null,
+          payment_plan,
+          deposit_amount_cents,
+          balance_amount_cents,
         });
 
         if (!result.ok) {
@@ -225,6 +245,9 @@ export async function POST(req: NextRequest) {
           discount_cents,
           coupon_code,
           total_cents,
+          payment_plan,
+          deposit_amount_cents,
+          balance_amount_cents,
         });
       } catch (err) {
         lastError = err;

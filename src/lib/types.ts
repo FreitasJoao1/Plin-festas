@@ -92,6 +92,7 @@ export interface Coupon {
 /** Estado de um pagamento opcional via InfinitePay — 'none' quando o cliente escolheu WhatsApp em vez de pagar online. */
 export type PaymentStatus = "none" | "pending" | "paid" | "failed";
 export type PaymentMethod = "pix" | "credit_card";
+export type PaymentPlan = "full" | "split_50_50";
 
 export interface Order {
   id: string;
@@ -125,6 +126,17 @@ export interface Order {
   infinitepay_transaction_nsu: string | null;
   infinitepay_invoice_slug: string | null;
   infinitepay_paid_amount_cents: number | null;
+  /** 'full' = cobra tudo de uma vez. 'split_50_50' = 50% sinal (usa os campos payment_* acima) + 50% saldo na entrega (campos balance_* abaixo). */
+  payment_plan: PaymentPlan;
+  /** Valor do sinal em centavos (50% do total). 0 quando payment_plan='full'. */
+  deposit_amount_cents: number;
+  /** Valor do saldo restante em centavos (50% do total), cobrado na entrega. 0 quando payment_plan='full'. */
+  balance_amount_cents: number;
+  balance_payment_status: PaymentStatus;
+  balance_payment_method: PaymentMethod | null;
+  balance_infinitepay_transaction_nsu: string | null;
+  balance_infinitepay_invoice_slug: string | null;
+  balance_infinitepay_paid_amount_cents: number | null;
   created_at: string;
 }
 

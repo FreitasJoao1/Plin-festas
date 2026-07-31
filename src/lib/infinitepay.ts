@@ -19,6 +19,20 @@ import { OrderItem } from "@/lib/types";
 
 const BASE_URL = "https://api.checkout.infinitepay.io";
 
+/**
+ * Pagamento fracionado 50/50: o sinal (ou pagamento integral) sempre usa
+ * order_code como order_nsu, exatamente como antes — nenhuma mudança
+ * pro fluxo já existente. O SALDO (segunda metade, cobrado na entrega)
+ * usa order_code + este sufixo, pra virar um NSU diferente na InfinitePay
+ * (não pode reusar o mesmo NSU para duas transações) e ainda assim dar
+ * pra achar o pedido de volta (ver getOrderByCode em src/lib/orders.ts).
+ */
+export const BALANCE_NSU_SUFFIX = "-SALDO";
+
+export function isBalanceNsu(orderNsu: string): boolean {
+  return orderNsu.endsWith(BALANCE_NSU_SUFFIX);
+}
+
 function getHandle(): string | null {
   return process.env.INFINITEPAY_HANDLE || null;
 }

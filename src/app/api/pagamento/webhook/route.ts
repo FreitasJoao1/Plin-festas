@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkPayment } from "@/lib/infinitepay";
-import { markPaymentConfirmed, getOrderByCode } from "@/lib/orders";
+import { checkPayment, isBalanceNsu } from "@/lib/infinitepay";
+import { markPaymentConfirmed, markBalancePaymentConfirmed, getOrderByCode } from "@/lib/orders";
 
 /**
  * Webhook da InfinitePay. A doc oficial não especifica assinatura/HMAC
@@ -62,12 +62,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, message: null });
   }
 
-  const result = await markPaymentConfirmed(orderNsu, {
-    transactionNsu,
-    invoiceSlug,
-    paidAmountCents: confirmation.paidAmountCents ?? confirmation.amountCents ?? order.total_cents,
-    method: confirmation.captureMethod ?? "pix",
-  });
+  const result = isBalanceNsu(orderNsu)
+    ? await markBalancePaymentConfirmed(order.order_code, {
+        transactionNsu,
+        invoiceSlug,
+        paidAmountCents: confirmation.paidAmountCents ?? confirmation.amountCents ?? order.balance_amount_cents,
+        method: confirmation.captureMethod ?? "pix",
+      })
+    : await markPaymentConfirmed(order.order_code, {
+        transactionNsu,
+        invoiceSlug,
+        paidAmountCents: confirmation.paidAmountCents ?? confirmation.amountCents ?? order.total_cents,
+        method: confirmation.captureMethod ?? "pix",
+      });
 
   if ("error" in result) {
     console.error(`[infinitepay webhook] falha ao gravar pagamento de ${orderNsu}:`, result.error);

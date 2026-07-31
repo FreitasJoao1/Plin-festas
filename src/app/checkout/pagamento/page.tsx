@@ -17,8 +17,10 @@ function PaymentStatusContent() {
     const qs = new URLSearchParams({ order: orderId });
     const slug = params.get("slug");
     const transactionNsu = params.get("transaction_nsu");
+    const leg = params.get("leg");
     if (slug) qs.set("slug", slug);
     if (transactionNsu) qs.set("transaction_nsu", transactionNsu);
+    if (leg) qs.set("leg", leg);
 
     let cancelled = false;
     // Alguns segundos de tentativa — o webhook pode levar um instante

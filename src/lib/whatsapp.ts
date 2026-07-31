@@ -44,6 +44,9 @@ export function buildWhatsAppMessage(order: Order): string {
       ? `🏷️ *Cupom ${order.coupon_code}:* -${formatBRL(order.discount_cents)}`
       : "",
     `💰 *Total:* ${formatBRL(order.total_cents)}`,
+    order.payment_plan === "split_50_50"
+      ? `💳 *Pagamento:* 50% agora (${formatBRL(order.deposit_amount_cents)}) + 50% na entrega (${formatBRL(order.balance_amount_cents)})`
+      : "",
     order.note ? `\n📝 *Obs:* ${order.note}` : "",
     order.booking_date
       ? `\n📅 *Data solicitada:* ${new Date(order.booking_date + "T12:00:00").toLocaleDateString("pt-BR")}\n_Sujeito à confirmação de agenda — entraremos em contato caso não seja possível atender nessa data._`

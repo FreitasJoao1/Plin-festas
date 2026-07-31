@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod, DayStatus, DayStatusOverride, BookingStatus } from "@/lib/types";
+import { BALANCE_NSU_SUFFIX } from "@/lib/infinitepay";
+import { Order, OrderItem, DeliveryCity, ShippingMethod, OrderStatus, BookingSettings, WeekOccupancy, PaymentMethod, PaymentPlan, DayStatus, DayStatusOverride, BookingStatus } from "@/lib/types";
 
 export interface CreateOrderInput {
   order_code: string;
@@ -23,6 +24,11 @@ export interface CreateOrderInput {
   booking_date: string | null;
   /** Default 'pending_approval'. Pedidos lançados manualmente pelo admin (WhatsApp/presencial) entram como 'approved'. */
   booking_status?: BookingStatus;
+  /** 'full' (default) ou 'split_50_50'. Ver comentário em supabase/schema.sql. */
+  payment_plan?: PaymentPlan;
+  /** Obrigatório calcular no servidor quando payment_plan='split_50_50' — nunca aceitar valor vindo do client. */
+  deposit_amount_cents?: number;
+  balance_amount_cents?: number;
 }
 
 /**
@@ -64,6 +70,9 @@ export async function createOrder(
       note: input.note,
       booking_date: input.booking_date,
       booking_status: input.booking_status ?? "pending_approval",
+      payment_plan: input.payment_plan ?? "full",
+      deposit_amount_cents: input.deposit_amount_cents ?? 0,
+      balance_amount_cents: input.balance_amount_cents ?? 0,
     })
     .select("id, order_code")
     .single();
@@ -137,14 +146,24 @@ export async function getOrderById(id: string): Promise<Order | null> {
  * Usada pelo webhook/payment_check, que só recebem o NSU, não o UUID.
  * Precisa da service_role porque roda sem sessão de usuário (chamada
  * server-to-server pela InfinitePay).
+ *
+ * O NSU do pagamento do SALDO (segunda metade do pagamento fracionado
+ * 50/50) usa o sufixo "-SALDO" (ver BALANCE_NSU_SUFFIX em
+ * src/lib/infinitepay.ts) para não colidir com o NSU do sinal/pagamento
+ * integral, que é sempre o order_code puro — por isso removemos o sufixo
+ * aqui antes de buscar, e quem chamou decide o que fazer sabendo se era
+ * sinal ou saldo (ver isBalanceNsu()).
  */
 export async function getOrderByCode(orderCode: string): Promise<Order | null> {
   const supabase = createServiceRoleClient();
   if (!supabase) return null;
+  const plainCode = orderCode.endsWith(BALANCE_NSU_SUFFIX)
+    ? orderCode.slice(0, -BALANCE_NSU_SUFFIX.length)
+    : orderCode;
   const { data, error } = await supabase
     .from("orders")
     .select("*")
-    .eq("order_code", orderCode)
+    .eq("order_code", plainCode)
     .single();
   if (error) return null;
   return data as Order;
@@ -197,6 +216,52 @@ export async function markPaymentConfirmed(
       infinitepay_transaction_nsu: payment.transactionNsu,
       infinitepay_invoice_slug: payment.invoiceSlug,
       infinitepay_paid_amount_cents: payment.paidAmountCents,
+    })
+    .eq("order_code", orderCode);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+/**
+ * Equivalentes a markPaymentPending/markPaymentConfirmed, mas para o
+ * SALDO (segunda metade do pagamento fracionado 50/50) — gravam nos
+ * campos balance_* em vez dos campos payment_* e infinitepay_* originais,
+ * que continuam representando sempre o sinal (ou o pagamento integral,
+ * quando payment_plan='full'). Mesmo motivo de service_role: rodam sem
+ * sessão de usuário.
+ */
+export async function markBalancePaymentPending(
+  orderId: string
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  const { error } = await supabase
+    .from("orders")
+    .update({ balance_payment_status: "pending" })
+    .eq("id", orderId);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function markBalancePaymentConfirmed(
+  orderCode: string,
+  payment: {
+    transactionNsu: string;
+    invoiceSlug: string;
+    paidAmountCents: number;
+    method: PaymentMethod;
+  }
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = createServiceRoleClient();
+  if (!supabase) return { error: "Service role não configurada." };
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      balance_payment_status: "paid",
+      balance_payment_method: payment.method,
+      balance_infinitepay_transaction_nsu: payment.transactionNsu,
+      balance_infinitepay_invoice_slug: payment.invoiceSlug,
+      balance_infinitepay_paid_amount_cents: payment.paidAmountCents,
     })
     .eq("order_code", orderCode);
   if (error) return { error: error.message };

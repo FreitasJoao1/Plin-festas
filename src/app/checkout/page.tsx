@@ -43,6 +43,7 @@ export default function CheckoutPage() {
   const [payingOnline, setPayingOnline] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paymentAvailable, setPaymentAvailable] = useState(false);
+  const [paymentPlan, setPaymentPlan] = useState<"full" | "split_50_50">("full");
 
   // Cupom de desconto ───────────────────────────────────────────────────
   const [couponInput, setCouponInput] = useState("");
@@ -181,6 +182,7 @@ export default function CheckoutPage() {
           note: note.trim() || undefined,
           bookingDate: bookingDate ?? undefined,
           couponCode: appliedCoupon?.code || undefined,
+          paymentPlan,
         }),
       });
 
@@ -221,6 +223,14 @@ export default function CheckoutPage() {
         infinitepay_transaction_nsu: null,
         infinitepay_invoice_slug: null,
         infinitepay_paid_amount_cents: null,
+        payment_plan: data.payment_plan ?? "full",
+        deposit_amount_cents: data.deposit_amount_cents ?? 0,
+        balance_amount_cents: data.balance_amount_cents ?? 0,
+        balance_payment_status: "none",
+        balance_payment_method: null,
+        balance_infinitepay_transaction_nsu: null,
+        balance_infinitepay_invoice_slug: null,
+        balance_infinitepay_paid_amount_cents: null,
         created_at: new Date().toISOString(),
       };
       return order;
@@ -454,6 +464,39 @@ export default function CheckoutPage() {
           </p>
         )}
 
+        {/* PLANO DE PAGAMENTO: à vista ou 50% agora + 50% na entrega */}
+        <section className="rounded-2xl border border-pink-100 bg-white p-4">
+          <h3 className="text-sm font-semibold text-ink">Forma de pagamento</h3>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setPaymentPlan("full")}
+              className={`rounded-xl border px-4 py-2.5 text-left text-sm transition-colors ${
+                paymentPlan === "full"
+                  ? "border-pink-500 bg-pink-50 text-ink"
+                  : "border-pink-100 text-ink-soft hover:border-pink-200"
+              }`}
+            >
+              <span className="font-semibold">100% agora</span>
+              <span className="block text-xs">{formatBRL(total)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentPlan("split_50_50")}
+              className={`rounded-xl border px-4 py-2.5 text-left text-sm transition-colors ${
+                paymentPlan === "split_50_50"
+                  ? "border-pink-500 bg-pink-50 text-ink"
+                  : "border-pink-100 text-ink-soft hover:border-pink-200"
+              }`}
+            >
+              <span className="font-semibold">50% agora + 50% na entrega</span>
+              <span className="block text-xs">
+                {formatBRL(Math.round(total / 2))} agora, restante na entrega
+              </span>
+            </button>
+          </div>
+        </section>
+
         {/* BOTÕES DE CONFIRMAÇÃO */}
         <div className="flex flex-col items-center gap-3">
           {paymentAvailable && (
@@ -463,7 +506,11 @@ export default function CheckoutPage() {
               className="flex w-full items-center justify-center gap-3 rounded-full bg-lilac-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-lilac-600 disabled:opacity-60"
             >
               <CreditCard className="h-5 w-5" />
-              {payingOnline ? "Gerando pagamento…" : `Pagar agora (Pix ou cartão) — ${formatBRL(total)}`}
+              {payingOnline
+                ? "Gerando pagamento…"
+                : paymentPlan === "split_50_50"
+                  ? `Pagar sinal agora (Pix ou cartão) — ${formatBRL(Math.round(total / 2))}`
+                  : `Pagar agora (Pix ou cartão) — ${formatBRL(total)}`}
             </button>
           )}
           <button
