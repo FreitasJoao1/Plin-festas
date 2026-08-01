@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { Coupon, CouponDiscountType, CouponScope, OrderItem, Product, ProductCategory } from "@/lib/types";
 
@@ -9,6 +9,13 @@ import { Coupon, CouponDiscountType, CouponScope, OrderItem, Product, ProductCat
 // pra listar todos os códigos ativos, o que anula o propósito de um cupom
 // "secreto". Aqui sempre buscamos POR CÓDIGO, nunca listamos a tabela toda
 // para o cliente.
+//
+// CORREÇÃO DE AUDITORIA: get_coupon_by_code e increment_coupon_usage agora
+// só são executáveis pelo service_role (revoke de anon/authenticated no
+// schema.sql) — antes eram chamáveis direto via REST do Supabase com a
+// anon key pública, sem passar pelo rate-limit de /api/cupom/validar.
+// Por isso as duas chamadas RPC abaixo usam createServiceRoleClient() em
+// vez do client normal.
 // ============================================================================
 
 export interface CouponValidationInput {
@@ -92,14 +99,17 @@ export async function validateCoupon(
     return { ok: false, error: "Cupons não estão disponíveis neste ambiente (modo demo)." };
   }
 
-  const supabase = await createClient();
+  // CORREÇÃO DE AUDITORIA: esta RPC agora só é executável pelo
+  // service_role (revoke de anon/authenticated em supabase/schema.sql) —
+  // precisa do client de service role, não do client normal.
+  const supabase = createServiceRoleClient();
   if (!supabase) {
-    return { ok: false, error: "Cupons não estão disponíveis neste ambiente (modo demo)." };
+    return {
+      ok: false,
+      error: "Cupons indisponíveis: SUPABASE_SERVICE_ROLE_KEY não configurada neste ambiente.",
+    };
   }
 
-  // RPC security definer — funciona com o cliente normal (anon/RLS), sem
-  // depender de SUPABASE_SERVICE_ROLE_KEY. Ver get_coupon_by_code em
-  // supabase/schema.sql.
   const { data, error } = await supabase.rpc("get_coupon_by_code", { p_code: code });
 
   if (error) {
@@ -160,18 +170,34 @@ export async function validateCoupon(
 
 /**
  * Incrementa o contador de usos do cupom. Chamada depois que o pedido é
- * criado com sucesso (src/app/api/checkout/route.ts). RPC security
- * definer — mesmo motivo de get_coupon_by_code: funciona com o cliente
- * normal do checkout público, sem depender de service_role.
+ * criado com sucesso (src/app/api/checkout/route.ts).
+ *
+ * CORREÇÃO DE AUDITORIA: a função SQL agora checa max_uses atomicamente
+ * dentro do próprio UPDATE (fecha a race condition de dois checkouts
+ * simultâneos no último uso de um cupom de uso único) e retorna
+ * true/false conforme conseguiu incrementar ou não. RPC também restrita
+ * a service_role agora — ver get_coupon_by_code acima.
+ *
+ * @returns true se o incremento foi aplicado, false se o cupom já tinha
+ * esgotado max_uses entre a validação e este incremento (corrida rara,
+ * mas possível) ou se o cupom não existe mais.
  */
-export async function incrementCouponUsage(couponId: string): Promise<void> {
-  const supabase = await createClient();
-  if (!supabase) return;
-  const { error } = await supabase.rpc("increment_coupon_usage", { p_coupon_id: couponId });
+export async function incrementCouponUsage(couponId: string): Promise<boolean> {
+  const supabase = createServiceRoleClient();
+  if (!supabase) {
+    console.error("Erro ao incrementar uso do cupom: SUPABASE_SERVICE_ROLE_KEY não configurada.");
+    return false;
+  }
+  const { data, error } = await supabase.rpc("increment_coupon_usage", { p_coupon_id: couponId });
   if (error) {
     // Não falha o checkout por isso — o pedido já foi criado. Só loga.
     console.error("Erro ao incrementar uso do cupom:", error.message);
+    return false;
   }
+  // A função SQL retorna "true" (setof boolean) quando incrementa, ou
+  // conjunto vazio quando a condição de max_uses barrou o UPDATE.
+  const row = Array.isArray(data) ? data[0] : data;
+  return row === true;
 }
 
 // ============================================================================

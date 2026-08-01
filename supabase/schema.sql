@@ -694,22 +694,19 @@ create policy "coupons_admin_manage"
   using (public.is_admin())
   with check (public.is_admin());
 
--- Incrementa o contador de uso do cupom de forma atômica (evita race
--- condition de dois checkouts simultâneos lendo o mesmo used_count e
--- sobrescrevendo um ao outro com um UPDATE ... SET used_count = X).
--- security definer porque é chamada via service_role a partir do checkout
--- público (sem sessão de admin) — ver src/lib/coupons.ts.
 -- Busca um cupom pelo código, ignorando RLS — usada pelo checkout público
--- (src/lib/coupons.ts::validateCoupon) via o cliente normal (anon/RLS),
--- SEM precisar da service_role key. Isso evita que a validação de cupom
--- inteira dependa de SUPABASE_SERVICE_ROLE_KEY estar configurada no
--- ambiente de deploy — se essa variável faltar ou for perdida numa nova
--- implantação, os cupons continuam funcionando normalmente.
--- Não é um risco de segurança maior que a policy que já existia: mesmo
--- sem esta função, um SELECT direto exigiria service_role (que também
--- ignora RLS); aqui só trocamos "chave secreta no servidor" por "função
--- restrita no banco", sem abrir listagem (a função exige o código exato,
--- não permite dar SELECT * na tabela toda).
+-- (src/lib/coupons.ts::validateCoupon).
+--
+-- CORREÇÃO DE AUDITORIA (achado MÉDIO): esta função é security definer, e
+-- por padrão do Postgres/Supabase toda função é executável por PUBLIC
+-- (inclui o role "anon") a menos que revogado explicitamente. Sem o
+-- revoke abaixo, qualquer pessoa conseguia chamar
+-- POST /rest/v1/rpc/get_coupon_by_code direto pela API REST do Supabase,
+-- com a anon key pública, testando código por código sem passar pelo
+-- rate-limit de /api/cupom/validar (brute-force de cupom "secreto").
+-- Agora só o service_role pode executar — src/lib/coupons.ts foi
+-- atualizado para chamar via createServiceRoleClient() em vez do client
+-- normal.
 create or replace function public.get_coupon_by_code(p_code text)
 returns setof public.coupons
 language sql
@@ -720,14 +717,44 @@ as $$
   select * from public.coupons where code = upper(trim(p_code));
 $$;
 
+revoke execute on function public.get_coupon_by_code(text) from public, anon, authenticated;
+grant execute on function public.get_coupon_by_code(text) to service_role;
+
+-- Incrementa o contador de uso do cupom de forma atômica.
+--
+-- CORREÇÃO DE AUDITORIA (achado ALTO): a versão anterior fazia
+-- "used_count = used_count + 1" sem checar max_uses dentro do mesmo
+-- UPDATE — a validação de "ainda tem uso disponível?" acontecia numa
+-- leitura SEPARADA, antes de criar o pedido (validateCoupon), sem lock
+-- nem transação amarrando as duas operações. Dois checkouts simultâneos
+-- no último uso de um cupom com max_uses=1 podiam ambos passar a
+-- validação antes que o incremento do primeiro fosse commitado —
+-- resultado: dois pedidos com desconto de um cupom "de uso único".
+--
+-- A correção coloca a condição "ainda cabe?" no próprio WHERE do UPDATE:
+-- o Postgres serializa updates concorrentes na mesma linha (row lock
+-- implícito), então o segundo checkout simultâneo só vê o used_count já
+-- incrementado pelo primeiro, e a condição passa a falhar de verdade.
+-- Retorna true se incrementou (cupom aplicado), false se esgotou entre a
+-- validação e a tentativa de incremento (código chamador deve reagir a
+-- isso — ver src/app/api/checkout/route.ts).
+--
+-- Mesmo revoke de acesso público do achado acima: só service_role executa.
 create or replace function public.increment_coupon_usage(p_coupon_id uuid)
-returns void
+returns boolean
 language sql
 security definer
 set search_path = public
 as $$
-  update public.coupons set used_count = used_count + 1 where id = p_coupon_id;
+  update public.coupons
+  set used_count = used_count + 1
+  where id = p_coupon_id
+    and (max_uses is null or used_count < max_uses)
+  returning true;
 $$;
+
+revoke execute on function public.increment_coupon_usage(uuid) from public, anon, authenticated;
+grant execute on function public.increment_coupon_usage(uuid) to service_role;
 
 -- Pedido carrega o cupom aplicado (se houve) e o desconto já calculado e
 -- validado no servidor — nunca confiamos em desconto calculado no client.

@@ -241,7 +241,18 @@ export async function POST(req: NextRequest) {
         // Conta o uso do cupom só depois que o pedido foi criado com
         // sucesso — não deixa o checkout falhar por causa disso.
         if (appliedCouponId) {
-          await incrementCouponUsage(appliedCouponId);
+          const incremented = await incrementCouponUsage(appliedCouponId);
+          if (!incremented) {
+            // Corrida rara: outro checkout simultâneo esgotou max_uses
+            // entre a validação e este incremento. O pedido já foi criado
+            // com o desconto aplicado — não vale a pena reverter/cancelar
+            // um pedido confirmado por causa de uma janela de
+            // milissegundos, então só alertamos para o admin decidir
+            // (ex: revisar manualmente se quer honrar o desconto).
+            console.warn(
+              `[checkout] cupom ${coupon_code} esgotou entre validação e incremento — pedido ${result.order_code} criado com desconto mesmo assim.`
+            );
+          }
         }
 
         return NextResponse.json({
