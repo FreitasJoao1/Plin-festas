@@ -8,7 +8,7 @@ import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import ShippingSelector from "@/components/ShippingSelector";
-import BookingCalendar, { WeekOccupancyData } from "@/components/BookingCalendar";
+import BookingCalendar, { WeekOccupancyData, DayStatusOverrideData } from "@/components/BookingCalendar";
 import { SPLIT_PAYMENT_MIN_CENTS, isSplitPaymentEligible } from "@/lib/split-payment";
 
 function mondayOf(dateStr: string): string {
@@ -124,6 +124,7 @@ export default function CheckoutPage() {
   const [bookingDate, setBookingDate] = useState<string | null>(null);
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => mondayOf(today));
   const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
+  const [dayStatusOverrides, setDayStatusOverrides] = useState<DayStatusOverrideData[]>([]);
   const [horizonDays, setHorizonDays] = useState(180);
 
   useEffect(() => {
@@ -134,6 +135,11 @@ export default function CheckoutPage() {
       .then((data) => {
         if (data.weeks) setOccupancies(data.weeks);
         if (data.settings?.horizon_days) setHorizonDays(data.settings.horizon_days);
+        // BUG CORRIGIDO: antes esse campo era ignorado — o admin marcava um
+        // dia como esgotado/bloqueado em /admin/agenda, mas o checkout
+        // nunca lia essa informação, então o dia continuava aparecendo
+        // verde (calculado só pela ocupação numérica da semana).
+        if (data.dayStatuses) setDayStatusOverrides(data.dayStatuses);
       })
       .catch(() => {
         // Se a agenda não carregar, o cliente ainda consegue finalizar
@@ -411,6 +417,7 @@ export default function CheckoutPage() {
               onNavigateWeek={handleNavigateWeek}
               onSelectDate={(date) => setBookingDate((d) => (d === date ? null : date))}
               selectedDate={bookingDate}
+              dayStatusOverrides={dayStatusOverrides}
             />
           </div>
           <p className="mt-3 rounded-2xl bg-babyblue-100 px-4 py-3 text-sm text-ink">

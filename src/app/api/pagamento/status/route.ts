@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrderById } from "@/lib/orders";
+import { getOrderByIdForPaymentFlow } from "@/lib/orders";
 import { checkPayment, isBalanceNsu, BALANCE_NSU_SUFFIX } from "@/lib/infinitepay";
 import { markPaymentConfirmed, markBalancePaymentConfirmed } from "@/lib/orders";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -14,8 +15,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * Se o webhook ainda não chegou mas o cliente já foi redirecionado com
  * sucesso (slug/transaction_nsu presentes na URL), fazemos uma consulta
  * ativa via payment_check aqui mesmo — cobre o caso do webhook atrasar.
+ *
+ * Usa getOrderByIdForPaymentFlow (service_role) em vez do client normal:
+ * pedidos de checkout anônimo têm user_id=null, e RLS nunca reconhece
+ * "auth.uid() = null" como o próprio dono — ver o comentário completo em
+ * src/lib/orders.ts. Como isso abre a leitura sem depender de RLS, o
+ * rate-limit abaixo é a defesa contra alguém tentando varrer orderIds.
  */
 export async function GET(req: NextRequest) {
+  const ip = getClientIp(req);
+  if (!checkRateLimit(`pagamento-status:${ip}`, { limit: 30, windowMs: 60_000 })) {
+    return NextResponse.json({ error: "Muitas tentativas. Aguarde um minuto." }, { status: 429 });
+  }
+
   const { searchParams } = new URL(req.url);
   const orderId = searchParams.get("order");
   const slug = searchParams.get("slug");
@@ -25,7 +37,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Pedido inválido." }, { status: 400 });
   }
 
-  const order = await getOrderById(orderId);
+  const order = await getOrderByIdForPaymentFlow(orderId);
   if (!order) {
     return NextResponse.json({ error: "Pedido não encontrado." }, { status: 404 });
   }

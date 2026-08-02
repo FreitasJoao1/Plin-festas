@@ -27,9 +27,11 @@ export default function ShippingSelector({
     null
   );
   const [loadingFrete, setLoadingFrete] = useState(false);
+  const [freteError, setFreteError] = useState<string | null>(null);
 
   function selectMethod(next: ShippingMethod) {
     setMethod(next);
+    setFreteError(null);
     const quote = getShippingQuote(next, { city, correiosQuoteCents });
     onChange({ ...quote, city, cep });
   }
@@ -42,7 +44,16 @@ export default function ShippingSelector({
 
   async function checkCorreios() {
     const clean = cep.replace(/\D/g, "");
-    if (clean.length !== 8) return;
+    setFreteError(null);
+    // CEP não é obrigatório: se estiver vazio, o cliente pode prosseguir
+    // normalmente — o frete fica "a combinar" (ver fallback manual=true em
+    // getShippingQuote). Só avisamos quando ele DIGITOU algo mas incompleto,
+    // que antes falhava silenciosamente sem nenhum retorno visual.
+    if (clean.length === 0) return;
+    if (clean.length !== 8) {
+      setFreteError("CEP incompleto — são 8 dígitos. Ou deixe em branco para combinar o frete pelo WhatsApp.");
+      return;
+    }
     setLoadingFrete(true);
     try {
       const res = await fetch("/api/frete", {
@@ -51,8 +62,18 @@ export default function ShippingSelector({
         body: JSON.stringify({ cep: clean, items }),
       });
       const quote: ShippingQuote = await res.json();
+      if (!res.ok) {
+        setFreteError("Não foi possível calcular o frete agora. Você pode prosseguir mesmo assim — combinamos pelo WhatsApp.");
+        setCorreiosQuoteCents(null);
+        onChange({ ...getShippingQuote("correios", { correiosQuoteCents: null }), cep: clean });
+        return;
+      }
       setCorreiosQuoteCents(quote.manual ? null : quote.price_cents);
       onChange({ ...quote, cep: clean });
+    } catch {
+      setFreteError("Erro de conexão ao calcular o frete. Você pode prosseguir mesmo assim — combinamos pelo WhatsApp.");
+      setCorreiosQuoteCents(null);
+      onChange({ ...getShippingQuote("correios", { correiosQuoteCents: null }), cep: clean });
     } finally {
       setLoadingFrete(false);
     }
@@ -97,7 +118,7 @@ export default function ShippingSelector({
               )}
               {m === "correios" && (
                 <p className="text-sm text-ink-soft">
-                  Informe o CEP para calcular
+                  CEP opcional — informe para calcular, ou combine pelo WhatsApp
                 </p>
               )}
             </div>
@@ -136,10 +157,16 @@ export default function ShippingSelector({
 
           {method === m && m === "correios" && (
             <div className="mt-3">
+              <label className="mb-1 block text-xs font-medium text-ink-soft">
+                CEP (opcional) — sem ele, combinamos o frete pelo WhatsApp
+              </label>
               <div className="flex gap-2">
                 <input
                   value={cep}
-                  onChange={(e) => setCep(e.target.value)}
+                  onChange={(e) => {
+                    setCep(e.target.value);
+                    setFreteError(null);
+                  }}
                   onBlur={checkCorreios}
                   placeholder="00000-000"
                   maxLength={9}
@@ -149,12 +176,16 @@ export default function ShippingSelector({
                   <Loader2 className="h-5 w-5 animate-spin text-pink-500" />
                 )}
               </div>
-              {!loadingFrete && correiosQuoteCents != null && (
+              {freteError && (
+                <p className="mt-2 text-sm text-pink-600">{freteError}</p>
+              )}
+              {!loadingFrete && !freteError && correiosQuoteCents != null && (
                 <p className="mt-2 text-sm font-medium text-pink-600">
                   Frete: {formatBRL(correiosQuoteCents)}
                 </p>
               )}
               {!loadingFrete &&
+                !freteError &&
                 cep.replace(/\D/g, "").length === 8 &&
                 correiosQuoteCents == null && (
                   <p className="mt-2 text-sm text-ink-soft">
@@ -162,6 +193,11 @@ export default function ShippingSelector({
                     por conta do cliente, combinado pelo WhatsApp.
                   </p>
                 )}
+              {!loadingFrete && !freteError && cep.trim() === "" && (
+                <p className="mt-2 text-sm text-ink-soft">
+                  Pode deixar em branco e prosseguir — combinamos o valor do frete pelo WhatsApp antes do envio.
+                </p>
+              )}
             </div>
           )}
 

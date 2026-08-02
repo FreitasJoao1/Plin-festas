@@ -142,6 +142,41 @@ export async function getOrderById(id: string): Promise<Order | null> {
 }
 
 /**
+ * BUG CORRIGIDO: mesmo pedido que getOrderById, mas com service_role.
+ *
+ * Usada só pelo FLUXO DE PAGAMENTO ONLINE (/api/pagamento/[orderId]/link
+ * e /api/pagamento/status) — não por telas onde um usuário navega vendo
+ * "meus pedidos".
+ *
+ * Motivo: a policy orders_select_own_or_admin exige auth.uid() = user_id.
+ * Pedidos de checkout ANÔNIMO (cliente não logado, opção suportada de
+ * propósito) são gravados com user_id = null. Em SQL, "auth.uid() = null"
+ * nunca é verdadeiro — nem para o próprio cliente que acabou de criar o
+ * pedido. Resultado: getOrderById() via RLS retornava null mesmo para o
+ * pedido correto, e a etapa seguinte do checkout (gerar link de
+ * pagamento) falhava com 404 logo após o pedido ter sido criado com
+ * sucesso — o cliente não conseguia fechar a compra.
+ *
+ * Essas duas rotas já são o próprio backend confirmando/prosseguindo um
+ * fluxo que ELE MESMO iniciou (o orderId vem de um pedido recém-criado
+ * pelo mesmo checkout, ou de um redirect assinado pela InfinitePay) — não
+ * é um usuário de terceiros adivinhando IDs alheios. Por isso é seguro
+ * usar service_role aqui: não abre leitura pública da tabela, só permite
+ * que o dono real (mesmo anônimo) e o próprio fluxo de pagamento
+ * completem a etapa que já estavam autorizados a fazer.
+ */
+export async function getOrderByIdForPaymentFlow(id: string): Promise<Order | null> {
+  const supabase = createServiceRoleClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error) return null;
+  return data as Order;
+}
+
+/**
  * Busca um pedido pelo order_code (= infinitepay_order_nsu que enviamos).
  * Usada pelo webhook/payment_check, que só recebem o NSU, não o UUID.
  * Precisa da service_role porque roda sem sessão de usuário (chamada

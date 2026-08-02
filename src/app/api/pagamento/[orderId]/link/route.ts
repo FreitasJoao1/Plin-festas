@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrderById, markPaymentPending } from "@/lib/orders";
+import { getOrderByIdForPaymentFlow, markPaymentPending } from "@/lib/orders";
 import { createPaymentLink, isInfinitePayConfigured } from "@/lib/infinitepay";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
@@ -32,7 +32,7 @@ export async function POST(
     return NextResponse.json({ error: "Pedido inválido." }, { status: 400 });
   }
 
-  const order = await getOrderById(orderId);
+  const order = await getOrderByIdForPaymentFlow(orderId);
   if (!order) {
     return NextResponse.json({ error: "Pedido não encontrado." }, { status: 404 });
   }
