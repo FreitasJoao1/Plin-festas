@@ -8,7 +8,7 @@ import { formatBRL } from "@/lib/shipping";
 import { DeliveryCity, Order, ShippingMethod, ShippingQuote } from "@/lib/types";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import ShippingSelector from "@/components/ShippingSelector";
-import BookingCalendar, { WeekOccupancyData, DayStatusOverrideData } from "@/components/BookingCalendar";
+import BookingCalendar, { WeekOccupancyData, DayStatusOverrideData, findFirstAvailableWeek } from "@/components/BookingCalendar";
 import { SPLIT_PAYMENT_MIN_CENTS, isSplitPaymentEligible } from "@/lib/split-payment";
 
 function mondayOf(dateStr: string): string {
@@ -23,6 +23,14 @@ function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T12:00:00");
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function formatDDMMYY(dateStr: string): string {
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
 }
 
 export default function CheckoutPage() {
@@ -126,10 +134,15 @@ export default function CheckoutPage() {
   const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
   const [dayStatusOverrides, setDayStatusOverrides] = useState<DayStatusOverrideData[]>([]);
   const [horizonDays, setHorizonDays] = useState(180);
+  const [hasAutoSelectedWeek, setHasAutoSelectedWeek] = useState(false);
 
+  // Busca a agenda do HORIZONTE INTEIRO de uma vez (não só a semana
+  // visível) — precisamos disso pra saber, já na primeira renderização,
+  // qual é a primeira semana com algum dia livre, sem esperar o cliente
+  // navegar semana por semana até achar uma disponível.
   useEffect(() => {
-    const start = visibleWeekStart;
-    const end = addDays(visibleWeekStart, 6);
+    const start = mondayOf(today);
+    const end = addDays(start, 180); // cobre o horizonte máximo (180 dias); ajusta sozinho se vier menor de settings
     fetch(`/api/agenda?start=${start}&end=${end}`)
       .then((r) => r.json())
       .then((data) => {
@@ -145,7 +158,34 @@ export default function CheckoutPage() {
         // Se a agenda não carregar, o cliente ainda consegue finalizar
         // sem escolher data — não bloqueia o checkout por isso.
       });
-  }, [visibleWeekStart]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Assim que a agenda carrega, abre o calendário direto na primeira
+  // semana com algum dia disponível — em vez de sempre começar na semana
+  // atual, mesmo que ela esteja inteira esgotada/bloqueada. Só faz isso
+  // uma vez (hasAutoSelectedWeek) para não brigar com a navegação manual
+  // do cliente depois.
+  useEffect(() => {
+    if (hasAutoSelectedWeek || occupancies.length === 0) return;
+    const maxDate = addDays(today, horizonDays);
+    const weekStarts = occupancies.map((w) => w.week_start);
+    const firstFree = findFirstAvailableWeek(weekStarts, today, maxDate, occupancies, dayStatusOverrides);
+    if (firstFree) setVisibleWeekStart(firstFree);
+    setHasAutoSelectedWeek(true);
+  }, [occupancies, dayStatusOverrides, today, horizonDays, hasAutoSelectedWeek]);
+
+  // "Próxima semana livre" a partir da semana atualmente visível — sutil,
+  // mostrado abaixo do calendário. Só aparece quando a semana visível NÃO
+  // é ela mesma a primeira livre (senão seria redundante mostrar a
+  // mesma data dita duas vezes).
+  const nextAvailableWeek = useMemo(() => {
+    if (occupancies.length === 0) return null;
+    const maxDate = addDays(today, horizonDays);
+    const searchFrom = addDays(visibleWeekStart, 7); // estritamente depois da semana visível
+    const weekStarts = occupancies.map((w) => w.week_start).filter((w) => w >= searchFrom);
+    return findFirstAvailableWeek(weekStarts, today, maxDate, occupancies, dayStatusOverrides);
+  }, [occupancies, dayStatusOverrides, today, horizonDays, visibleWeekStart]);
 
   const handleNavigateWeek = useCallback((direction: -1 | 1) => {
     setVisibleWeekStart((w) => addDays(w, direction * 7));
@@ -420,6 +460,15 @@ export default function CheckoutPage() {
               dayStatusOverrides={dayStatusOverrides}
             />
           </div>
+          {nextAvailableWeek && (
+            <button
+              type="button"
+              onClick={() => setVisibleWeekStart(nextAvailableWeek)}
+              className="mt-2 text-xs text-ink-soft/70 transition-colors hover:text-pink-600"
+            >
+              Próxima semana livre: {formatDDMMYY(nextAvailableWeek)}
+            </button>
+          )}
           <p className="mt-3 rounded-2xl bg-babyblue-100 px-4 py-3 text-sm text-ink">
             ⚠️ Data sujeita à confirmação da loja. Fora da disponibilidade
             padrão, pode ser feito encaixe mediante taxa adicional de 10%

@@ -53,6 +53,56 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Um dia conta como "disponível" com a mesma regra usada para colorir o
+ * grid (ver o cálculo de isFull dentro do componente): não passado, não
+ * além do horizonte, sem override full/blocked, e a semana ainda não
+ * bateu a cota. Fica fora do componente para poder ser reusada sem
+ * renderizar nada (ex: achar a primeira semana livre antes de montar o
+ * calendário).
+ */
+function isDayAvailable(
+  date: string,
+  today: string,
+  maxDate: string,
+  weekCapacity: number,
+  weekCount: number,
+  dayStatusOverrides: DayStatusOverrideData[]
+): boolean {
+  if (date < today || date > maxDate) return false;
+  const override = dayStatusOverrides.find((o) => o.date === date)?.status ?? null;
+  if (override === "full" || override === "blocked") return false;
+  if (weekCapacity > 0 && weekCount >= weekCapacity) return false;
+  return true;
+}
+
+/**
+ * Acha a segunda-feira da primeira semana, dentro do range de semanas
+ * carregado, que tem pelo menos um dia disponível a partir de `today`
+ * (inclusive). Usada pelo checkout para já abrir o calendário na semana
+ * certa, em vez de sempre começar na semana atual mesmo que ela esteja
+ * inteira esgotada/bloqueada.
+ */
+export function findFirstAvailableWeek(
+  weekStarts: string[],
+  today: string,
+  maxDate: string,
+  occupancies: WeekOccupancyData[],
+  dayStatusOverrides: DayStatusOverrideData[]
+): string | null {
+  for (const weekStart of [...weekStarts].sort()) {
+    const weekData = occupancies.find((w) => w.week_start === weekStart);
+    const capacity = weekData?.capacity ?? 20;
+    const count = weekData?.count ?? 0;
+    const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    const hasFreeDay = days.some((d) =>
+      isDayAvailable(d, today, maxDate, capacity, count, dayStatusOverrides)
+    );
+    if (hasFreeDay) return weekStart;
+  }
+  return null;
+}
+
 function formatShort(dateStr: string): string {
   return new Date(dateStr + "T12:00:00").toLocaleDateString("pt-BR", {
     day: "2-digit",
