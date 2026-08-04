@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, MessageCircle } from "lucide-react";
 import { Order } from "@/lib/types";
 import { formatBRL } from "@/lib/shipping";
+import { buildCustomerWhatsAppUrl } from "@/lib/whatsapp";
 
 const STATUS_LABEL: Record<Order["balance_payment_status"], { label: string; classes: string }> = {
   none: { label: "Ainda não cobrado", classes: "bg-gray-50 text-gray-600" },
@@ -77,6 +78,20 @@ export default function BalancePaymentPanel({ order }: { order: Order }) {
               >
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </button>
+              <a
+                href={buildCustomerWhatsAppUrl(
+                  order.customer_phone,
+                  `Oi, ${order.customer_name}! Seu pedido ${order.order_code} está pronto 🎉\n` +
+                    `Falta só o saldo de ${formatBRL(order.balance_amount_cents)} para a entrega.\n` +
+                    `Pode pagar por aqui: ${link}`
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-shrink-0 rounded-full bg-green-500 p-1.5 text-white transition-colors hover:bg-green-600"
+                aria-label="Enviar no WhatsApp"
+              >
+                <MessageCircle className="h-4 w-4" />
+              </a>
             </div>
           )}
           {error && <p className="mt-2 text-sm text-pink-700">{error}</p>}

@@ -78,8 +78,9 @@ export function buildWhatsAppUrl(order: Order): string {
  * com o DDI. Os links da InfinitePay/WhatsApp são sempre no mesmo formato
  * — só muda os dígitos depois do 55.
  */
-export function buildCustomerWhatsAppUrl(phone: string): string {
+export function buildCustomerWhatsAppUrl(phone: string, message?: string): string {
   const digits = phone.replace(/\D/g, "");
   const withCountryCode = digits.startsWith("55") ? digits : `55${digits}`;
-  return `https://wa.me/${withCountryCode}`;
+  const base = `https://wa.me/${withCountryCode}`;
+  return message ? `${base}?text=${encodeURIComponent(message)}` : base;
 }

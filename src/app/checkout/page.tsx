@@ -53,7 +53,7 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [paymentAvailable, setPaymentAvailable] = useState(false);
   const [paymentPlan, setPaymentPlan] = useState<"full" | "split_50_50">("full");
-  const [intendedMethod, setIntendedMethod] = useState<"pix" | "dinheiro" | "cartao">("pix");
+  const [intendedMethod, setIntendedMethod] = useState<"pix" | "cartao">("pix");
 
   // Cupom de desconto ───────────────────────────────────────────────────
   const [couponInput, setCouponInput] = useState("");
@@ -202,7 +202,7 @@ export default function CheckoutPage() {
   const total = Math.max(0, subtotalCents() - discountCents) + shippingCharged;
   const splitValueEligible = isSplitPaymentEligible(total);
   // 50/50 só é visível/clicável quando o valor bate o mínimo E o método
-  // escolhido é pix ou dinheiro — cartão sempre paga o total de uma vez.
+  // escolhido é pix — cartão sempre paga o total de uma vez.
   const splitEligible = splitValueEligible && intendedMethod !== "cartao";
 
   // Se o total cair abaixo do mínimo (cupom aplicado, item removido etc.)
@@ -537,14 +537,13 @@ export default function CheckoutPage() {
         )}
 
         {/* MÉTODO DE PAGAMENTO PRETENDIDO — decide se o parcelamento 50/50
-            fica disponível (só pix/dinheiro; cartão sempre é 100%). */}
+            fica disponível (só pix; cartão sempre é 100%). */}
         <section className="rounded-2xl border border-pink-100 bg-white p-4">
           <h3 className="text-sm font-semibold text-ink">Como você pretende pagar?</h3>
-          <div className="mt-2 grid grid-cols-3 gap-2">
+          <div className="mt-2 grid grid-cols-2 gap-2">
             {(
               [
                 { value: "pix" as const, label: "Pix" },
-                { value: "dinheiro" as const, label: "Dinheiro" },
                 { value: "cartao" as const, label: "Cartão" },
               ]
             ).map((opt) => (
@@ -565,13 +564,13 @@ export default function CheckoutPage() {
           <p className="mt-2 text-xs text-ink-soft">
             {intendedMethod === "cartao"
               ? "No cartão, o pagamento é sempre integral."
-              : "Pix e dinheiro liberam a opção de pagar metade agora e metade na entrega."}
+              : "Pix libera a opção de pagar metade agora e metade na entrega."}
           </p>
         </section>
 
         {/* PLANO DE PAGAMENTO: à vista ou 50% agora + 50% na entrega —
             o bloco de 50/50 só aparece (visível e clicável) quando o
-            método pretendido é pix ou dinheiro e o total é >= R$100. */}
+            método pretendido é pix e o total é >= R$100. */}
         <section className="rounded-2xl border border-pink-100 bg-white p-4">
           <h3 className="text-sm font-semibold text-ink">Forma de pagamento</h3>
           <div className={`mt-2 grid gap-2 ${splitEligible ? "sm:grid-cols-2" : ""}`}>
