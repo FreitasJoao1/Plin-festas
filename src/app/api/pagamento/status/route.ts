@@ -3,6 +3,7 @@ import { getOrderByIdForPaymentFlow } from "@/lib/orders";
 import { checkPayment, isBalanceNsu, BALANCE_NSU_SUFFIX } from "@/lib/infinitepay";
 import { markPaymentConfirmed, markBalancePaymentConfirmed } from "@/lib/orders";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { isServiceRoleConfigured } from "@/lib/supabase/config";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -26,6 +27,14 @@ export async function GET(req: NextRequest) {
   const ip = getClientIp(req);
   if (!checkRateLimit(`pagamento-status:${ip}`, { limit: 30, windowMs: 60_000 })) {
     return NextResponse.json({ error: "Muitas tentativas. Aguarde um minuto." }, { status: 429 });
+  }
+
+  if (!isServiceRoleConfigured()) {
+    console.error("SUPABASE_SERVICE_ROLE_KEY ausente — status de pagamento não pode ler pedidos anônimos.");
+    return NextResponse.json(
+      { error: "Consulta de pagamento temporariamente indisponível (configuração pendente)." },
+      { status: 503 }
+    );
   }
 
   const { searchParams } = new URL(req.url);

@@ -166,7 +166,20 @@ export async function getOrderById(id: string): Promise<Order | null> {
  * completem a etapa que já estavam autorizados a fazer.
  */
 export async function getOrderByIdForPaymentFlow(id: string): Promise<Order | null> {
+  // BUG CORRIGIDO: createServiceRoleClient() retorna null quando
+  // SUPABASE_SERVICE_ROLE_KEY não está configurada no ambiente — sem
+  // este check, "supabase.from(...)" lançava uma exceção não tratada
+  // (TypeError sobre null), que a rota de pagamento não capturava,
+  // virando um 500 genérico. No front isso caía na mensagem "não foi
+  // possível iniciar o pagamento, tente pelo WhatsApp" mesmo o pedido
+  // já tendo sido criado com sucesso.
   const supabase = createServiceRoleClient();
+  if (!supabase) {
+    console.error(
+      "getOrderByIdForPaymentFlow: SUPABASE_SERVICE_ROLE_KEY não configurada neste ambiente."
+    );
+    return null;
+  }
   const { data, error } = await supabase
     .from("orders")
     .select("*")

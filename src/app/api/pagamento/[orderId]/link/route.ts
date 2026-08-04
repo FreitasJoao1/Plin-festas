@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrderByIdForPaymentFlow, markPaymentPending } from "@/lib/orders";
 import { createPaymentLink, isInfinitePayConfigured } from "@/lib/infinitepay";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { isServiceRoleConfigured } from "@/lib/supabase/config";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://plin-design-zeta.vercel.app";
@@ -23,6 +24,17 @@ export async function POST(
   if (!isInfinitePayConfigured()) {
     return NextResponse.json(
       { error: "Pagamento online ainda não está disponível. Finalize pelo WhatsApp." },
+      { status: 503 }
+    );
+  }
+
+  if (!isServiceRoleConfigured()) {
+    // Erro de configuração de ambiente, não do cliente — mensagem
+    // diferente da genérica de "pedido não encontrado" pra facilitar
+    // diagnosticar em produção (ver SUPABASE_SERVICE_ROLE_KEY na Vercel).
+    console.error("SUPABASE_SERVICE_ROLE_KEY ausente — fluxo de pagamento online não pode ler pedidos anônimos.");
+    return NextResponse.json(
+      { error: "Pagamento online temporariamente indisponível (configuração pendente). Finalize pelo WhatsApp." },
       { status: 503 }
     );
   }

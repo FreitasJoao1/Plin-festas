@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
+    // Desabilita otimização automática de imagens (Image Optimization)
+    // para não contar com limite free do Vercel (5k/mês). Imagens são
+    // servidas direto do Supabase Storage sem processamento no servidor.
+    unoptimized: true,
     // TODO: troque pelo(s) domínio(s) reais de onde as fotos dos produtos
     // vão ser servidas (Supabase Storage, Cloudinary, etc.)
     remotePatterns: [

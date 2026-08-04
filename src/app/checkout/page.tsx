@@ -53,6 +53,7 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [paymentAvailable, setPaymentAvailable] = useState(false);
   const [paymentPlan, setPaymentPlan] = useState<"full" | "split_50_50">("full");
+  const [intendedMethod, setIntendedMethod] = useState<"pix" | "dinheiro" | "cartao">("pix");
 
   // Cupom de desconto ───────────────────────────────────────────────────
   const [couponInput, setCouponInput] = useState("");
@@ -199,11 +200,15 @@ export default function CheckoutPage() {
   const shippingCharged = shipping.manual ? 0 : shipping.price_cents;
   const discountCents = appliedCoupon?.discountCents ?? 0;
   const total = Math.max(0, subtotalCents() - discountCents) + shippingCharged;
-  const splitEligible = isSplitPaymentEligible(total);
+  const splitValueEligible = isSplitPaymentEligible(total);
+  // 50/50 só é visível/clicável quando o valor bate o mínimo E o método
+  // escolhido é pix ou dinheiro — cartão sempre paga o total de uma vez.
+  const splitEligible = splitValueEligible && intendedMethod !== "cartao";
 
   // Se o total cair abaixo do mínimo (cupom aplicado, item removido etc.)
-  // enquanto "50/50" estava selecionado, volta pro pagamento integral —
-  // não deixa o plano ficar selecionado mas inacessível.
+  // ou o método mudar para cartão enquanto "50/50" estava selecionado,
+  // volta pro pagamento integral — não deixa o plano ficar selecionado
+  // mas inacessível.
   useEffect(() => {
     if (!splitEligible && paymentPlan === "split_50_50") {
       setPaymentPlan("full");
@@ -531,10 +536,45 @@ export default function CheckoutPage() {
           </p>
         )}
 
-        {/* PLANO DE PAGAMENTO: à vista ou 50% agora + 50% na entrega */}
+        {/* MÉTODO DE PAGAMENTO PRETENDIDO — decide se o parcelamento 50/50
+            fica disponível (só pix/dinheiro; cartão sempre é 100%). */}
+        <section className="rounded-2xl border border-pink-100 bg-white p-4">
+          <h3 className="text-sm font-semibold text-ink">Como você pretende pagar?</h3>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {(
+              [
+                { value: "pix" as const, label: "Pix" },
+                { value: "dinheiro" as const, label: "Dinheiro" },
+                { value: "cartao" as const, label: "Cartão" },
+              ]
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setIntendedMethod(opt.value)}
+                className={`rounded-xl border px-3 py-2 text-center text-sm transition-colors ${
+                  intendedMethod === opt.value
+                    ? "border-pink-500 bg-pink-50 text-ink"
+                    : "border-pink-100 text-ink-soft hover:border-pink-200"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink-soft">
+            {intendedMethod === "cartao"
+              ? "No cartão, o pagamento é sempre integral."
+              : "Pix e dinheiro liberam a opção de pagar metade agora e metade na entrega."}
+          </p>
+        </section>
+
+        {/* PLANO DE PAGAMENTO: à vista ou 50% agora + 50% na entrega —
+            o bloco de 50/50 só aparece (visível e clicável) quando o
+            método pretendido é pix ou dinheiro e o total é >= R$100. */}
         <section className="rounded-2xl border border-pink-100 bg-white p-4">
           <h3 className="text-sm font-semibold text-ink">Forma de pagamento</h3>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div className={`mt-2 grid gap-2 ${splitEligible ? "sm:grid-cols-2" : ""}`}>
             <button
               type="button"
               onClick={() => setPaymentPlan("full")}
@@ -547,27 +587,28 @@ export default function CheckoutPage() {
               <span className="font-semibold">100% agora</span>
               <span className="block text-xs">{formatBRL(total)}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => splitEligible && setPaymentPlan("split_50_50")}
-              disabled={!splitEligible}
-              title={!splitEligible ? `Disponível a partir de ${formatBRL(SPLIT_PAYMENT_MIN_CENTS)}` : undefined}
-              className={`rounded-xl border px-4 py-2.5 text-left text-sm transition-colors ${
-                !splitEligible
-                  ? "cursor-not-allowed border-pink-50 text-ink-soft/50"
-                  : paymentPlan === "split_50_50"
+            {splitEligible && (
+              <button
+                type="button"
+                onClick={() => setPaymentPlan("split_50_50")}
+                className={`rounded-xl border px-4 py-2.5 text-left text-sm transition-colors ${
+                  paymentPlan === "split_50_50"
                     ? "border-pink-500 bg-pink-50 text-ink"
                     : "border-pink-100 text-ink-soft hover:border-pink-200"
-              }`}
-            >
-              <span className="font-semibold">50% agora + 50% na entrega</span>
-              <span className="block text-xs">
-                {splitEligible
-                  ? `${formatBRL(Math.round(total / 2))} agora, restante na entrega`
-                  : `Disponível a partir de ${formatBRL(SPLIT_PAYMENT_MIN_CENTS)}`}
-              </span>
-            </button>
+                }`}
+              >
+                <span className="font-semibold">50% agora + 50% na entrega</span>
+                <span className="block text-xs">
+                  {`${formatBRL(Math.round(total / 2))} agora, restante na entrega`}
+                </span>
+              </button>
+            )}
           </div>
+          {!splitEligible && intendedMethod !== "cartao" && !splitValueEligible && (
+            <p className="mt-2 text-xs text-ink-soft">
+              Parcelamento 50/50 disponível a partir de {formatBRL(SPLIT_PAYMENT_MIN_CENTS)}.
+            </p>
+          )}
         </section>
 
         {/* BOTÕES DE CONFIRMAÇÃO */}
