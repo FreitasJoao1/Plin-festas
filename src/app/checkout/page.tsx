@@ -313,7 +313,7 @@ export default function CheckoutPage() {
         window.location.href = buildWhatsAppUrl(order);
       }
     });
-  }, [loading, payingOnline, agreedToArtTerms, name, email, phone, note, shipping, items]); // eslint-disable-line
+  }, [loading, payingOnline, agreedToArtTerms, name, email, phone, note, shipping, items, appliedCoupon, bookingDate, paymentPlan]);
 
   // Pagamento online opcional via InfinitePay — cria o pedido igual ao
   // fluxo do WhatsApp, mas em vez de ir pro wa.me, gera um link de
@@ -338,7 +338,7 @@ export default function CheckoutPage() {
     } finally {
       setPayingOnline(false);
     }
-  }, [loading, payingOnline, agreedToArtTerms, name, email, phone, note, shipping, items]); // eslint-disable-line
+  }, [loading, payingOnline, agreedToArtTerms, name, email, phone, note, shipping, items, appliedCoupon, bookingDate, paymentPlan]);
 
   if (items.length === 0) {
     return (
