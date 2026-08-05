@@ -60,6 +60,7 @@ export default function ContaPage() {
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [payingBalanceId, setPayingBalanceId] = useState<string | null>(null);
 
   const supabase = createClient();
   const router = useRouter();
@@ -147,6 +148,24 @@ export default function ContaPage() {
     } finally {
       setCancelingId(null);
       setConfirmCancelId(null);
+    }
+  }, []);
+
+  const handlePayBalance = useCallback(async (orderId: string) => {
+    setPayingBalanceId(orderId);
+    setOrdersError(null);
+    try {
+      const res = await fetch(`/api/pedidos/${orderId}/pagar-saldo`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setOrdersError(data.error ?? 'Não foi possível gerar o link de pagamento.');
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setOrdersError('Erro de conexão. Tente novamente.');
+    } finally {
+      setPayingBalanceId(null);
     }
   }, []);
 
@@ -451,6 +470,22 @@ export default function ContaPage() {
                               <span className="text-xs font-semibold text-amber-600">⏳ Pagamento pendente</span>
                             )}
                           </span>
+
+                          {order.payment_plan === "split_50_50" &&
+                            order.balance_payment_status !== "paid" &&
+                            (order.status === "enviado" || order.status === "entregue") && (
+                              <button
+                                onClick={() => handlePayBalance(order.id)}
+                                disabled={payingBalanceId === order.id}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                              >
+                                {payingBalanceId === order.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  `Pagar restante (${formatBRL(order.balance_amount_cents)})`
+                                )}
+                              </button>
+                            )}
 
                           {canCancel && (
                             confirmCancelId === order.id ? (
