@@ -50,9 +50,23 @@ export async function createOrder(
     data: { user },
   } = await supabase!.auth.getUser();
 
-  const { data, error } = await supabase!
+  // Gera o id aqui e insere sem encadear .select() depois. Motivo: quando o
+  // insert tem RETURNING (é o que .insert().select() vira por baixo no
+  // PostgREST), o Postgres também exige que a linha passe pela policy de
+  // SELECT da tabela, não só pela de INSERT — mesmo que o INSERT em si seja
+  // permitido. A policy orders_select_own_or_admin exige
+  // auth.uid() = user_id (ou is_admin()); num checkout anônimo user_id é
+  // null e auth.uid() também é null, então esse SELECT implícito falhava e
+  // o Postgres reportava "new row violates row-level security policy for
+  // table orders" (42501) mesmo com orders_insert_anyone liberando tudo.
+  // Como já geramos o id e o order_code no servidor antes do insert, não
+  // precisamos do RETURNING pra nada — e evitamos essa armadilha inteira.
+  const orderId = randomUUID();
+
+  const { error } = await supabase!
     .from("orders")
     .insert({
+      id: orderId,
       order_code: input.order_code,
       user_id: user?.id ?? null,
       customer_name: input.customer_name,
@@ -73,9 +87,7 @@ export async function createOrder(
       payment_plan: input.payment_plan ?? "full",
       deposit_amount_cents: input.deposit_amount_cents ?? 0,
       balance_amount_cents: input.balance_amount_cents ?? 0,
-    })
-    .select("id, order_code")
-    .single();
+    });
 
   // O trigger `enforce_booking_capacity` pode rejeitar o insert (data no
   // passado, fora do horizonte, ou semana lotada) — isso chega aqui como
@@ -111,7 +123,7 @@ export async function createOrder(
     }
     return { ok: false, error: error.message };
   }
-  return { ok: true, id: data.id, order_code: data.order_code };
+  return { ok: true, id: orderId, order_code: input.order_code };
 }
 
 export async function getOrdersForUser(userId: string): Promise<Order[]> {
