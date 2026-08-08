@@ -4,7 +4,8 @@ import { Sparkles, Truck, Store, ShieldCheck } from "lucide-react";
 import Marquee from "@/components/Marquee";
 import BuntingDivider from "@/components/BuntingDivider";
 import ProductCard from "@/components/ProductCard";
-import { getFeaturedProducts } from "@/lib/products";
+import PromoPopup from "@/components/PromoPopup";
+import { getFeaturedProducts, getPromoProducts } from "@/lib/products";
 import { getHomeHero, getHomeTrustCards } from "@/lib/site-content";
 import { CATEGORY_LABELS } from "@/lib/mock-data";
 import { ProductCategory } from "@/lib/types";
@@ -12,14 +13,17 @@ import { ProductCategory } from "@/lib/types";
 const TRUST_ICONS = [Store, Truck, ShieldCheck];
 
 export default async function HomePage() {
-  const [products, hero, trustCards] = await Promise.all([
+  const [products, hero, trustCards, promoProducts] = await Promise.all([
     getFeaturedProducts(),
     getHomeHero(),
     getHomeTrustCards(),
+    getPromoProducts(),
   ]);
 
   return (
     <div>
+      <PromoPopup products={promoProducts} />
+
       {/* Hero */}
       <section className="relative overflow-hidden bg-gradient-to-b from-pink-100 via-pink-50 to-white">
         <div className="container-plin grid items-center gap-8 py-14 sm:py-20 md:grid-cols-2">

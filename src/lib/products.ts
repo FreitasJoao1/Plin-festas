@@ -72,6 +72,19 @@ export async function getFeaturedProducts(limit = 12): Promise<Product[]> {
   return all.slice(0, limit);
 }
 
+/** Produtos ativos com preço "de/por" (compare_at_price_cents > price_cents) e em estoque. */
+export async function getPromoProducts(limit = 8): Promise<Product[]> {
+  const all = await getProducts();
+  return all
+    .filter(
+      (p) =>
+        p.stock > 0 &&
+        p.compare_at_price_cents !== null &&
+        p.compare_at_price_cents > p.price_cents
+    )
+    .slice(0, limit);
+}
+
 // ============================================================================
 // Funções de admin — usadas só dentro de /admin (rotas protegidas pelo
 // middleware). Diferente de getProducts(), estas trazem produtos inativos

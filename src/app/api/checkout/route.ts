@@ -14,8 +14,8 @@ interface CheckoutBody {
   cartItems: { product_id: string; quantity: number }[];
   shipping: { method: ShippingMethod; city?: DeliveryCity; cep?: string };
   note?: string;
-  /** Data desejada pelo cliente para o evento/entrega, formato YYYY-MM-DD. */
-  bookingDate?: string;
+  /** Data desejada pelo cliente para o evento/entrega, formato YYYY-MM-DD. Obrigatória. */
+  bookingDate: string;
   /** Código do cupom de desconto aplicado no checkout, se houver. */
   couponCode?: string;
   /** 'full' (padrão) ou 'split_50_50' — 50% agora (sinal) + 50% na entrega. */
@@ -75,9 +75,7 @@ function validate(body: unknown): body is CheckoutBody {
 
   if (b.note !== undefined && typeof b.note !== "string") return false;
 
-  if (b.bookingDate !== undefined) {
-    if (typeof b.bookingDate !== "string" || !DATE_RE.test(b.bookingDate)) return false;
-  }
+  if (typeof b.bookingDate !== "string" || !DATE_RE.test(b.bookingDate)) return false;
 
   if (b.couponCode !== undefined && typeof b.couponCode !== "string") return false;
 
@@ -225,7 +223,7 @@ export async function POST(req: NextRequest) {
           shipping_cents,
           total_cents,
           note: note || null,
-          booking_date: body.bookingDate ?? null,
+          booking_date: body.bookingDate,
           payment_plan,
           deposit_amount_cents,
           balance_amount_cents,

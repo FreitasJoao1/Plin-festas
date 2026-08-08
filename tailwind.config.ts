@@ -52,9 +52,16 @@ const config: Config = {
           "0%": { transform: "translateX(-50%)" },
           "100%": { transform: "translateX(0%)" },
         },
+        // Entrada do popup de promoção: sobe e some do desfoque, como
+        // um cartão sendo colocado sobre a mesa.
+        "promo-in": {
+          "0%": { opacity: "0", transform: "translateY(16px) scale(0.96)" },
+          "100%": { opacity: "1", transform: "translateY(0) scale(1)" },
+        },
       },
       animation: {
         marquee: "marquee 32s linear infinite",
+        "promo-in": "promo-in 0.45s cubic-bezier(0.16, 1, 0.3, 1)",
       },
     },
   },

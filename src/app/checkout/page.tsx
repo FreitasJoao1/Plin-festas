@@ -231,6 +231,10 @@ export default function CheckoutPage() {
       setError("Preencha nome e WhatsApp para continuar.");
       return null;
     }
+    if (!bookingDate) {
+      setError("Escolha uma data desejada para continuar.");
+      return null;
+    }
 
     setLoading(true);
     try {
@@ -448,11 +452,10 @@ export default function CheckoutPage() {
         </section>
 
         <section>
-          <h2 className="font-display text-xl text-ink">Data desejada (opcional)</h2>
+          <h2 className="font-display text-xl text-ink">Data desejada *</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Escolha a data do seu evento ou entrega. Semanas muito cheias
-            ficam bloqueadas — se não escolher, combinamos o prazo por
-            WhatsApp normalmente.
+            ficam bloqueadas.
           </p>
           <div className="mt-4">
             <BookingCalendar
@@ -477,7 +480,7 @@ export default function CheckoutPage() {
           <p className="mt-3 rounded-2xl bg-babyblue-100 px-4 py-3 text-sm text-ink">
             ⚠️ Data sujeita à confirmação da loja. Fora da disponibilidade
             padrão, pode ser feito encaixe mediante taxa adicional de 10%
-            sobre o valor do pedido — combinamos tudo pelo WhatsApp.
+            sobre o valor do pedido — combinamos pelo WhatsApp.
           </p>
         </section>
 
@@ -615,7 +618,7 @@ export default function CheckoutPage() {
           {paymentAvailable && (
             <button
               onClick={handlePayOnline}
-              disabled={loading || payingOnline || !agreedToArtTerms}
+              disabled={loading || payingOnline || !agreedToArtTerms || !bookingDate}
               className="flex w-full items-center justify-center gap-3 rounded-full bg-lilac-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-lilac-600 disabled:opacity-60"
             >
               <CreditCard className="h-5 w-5" />
@@ -628,7 +631,7 @@ export default function CheckoutPage() {
           )}
           <button
             onClick={handleConfirm}
-            disabled={loading || payingOnline || !agreedToArtTerms}
+            disabled={loading || payingOnline || !agreedToArtTerms || !bookingDate}
             className="flex w-full items-center justify-center gap-3 rounded-full bg-green-500 py-4 font-bold text-white shadow-lg transition-colors hover:bg-green-600 disabled:opacity-60"
           >
             <MessageCircle className="h-5 w-5" />
@@ -637,6 +640,11 @@ export default function CheckoutPage() {
           {!agreedToArtTerms && (
             <p className="text-center text-xs text-pink-600">
               Marque a caixa acima para liberar a finalização do pedido.
+            </p>
+          )}
+          {agreedToArtTerms && !bookingDate && (
+            <p className="text-center text-xs text-pink-600">
+              Escolha uma data desejada acima para liberar a finalização do pedido.
             </p>
           )}
           {paymentAvailable && (
