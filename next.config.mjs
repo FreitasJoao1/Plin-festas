@@ -1,12 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    // Desabilita otimização automática de imagens (Image Optimization)
-    // para não contar com limite free do Vercel (5k/mês). Imagens são
-    // servidas direto do Supabase Storage sem processamento no servidor.
-    unoptimized: true,
-    // TODO: troque pelo(s) domínio(s) reais de onde as fotos dos produtos
-    // vão ser servidas (Supabase Storage, Cloudinary, etc.)
+    // Otimização automática de imagens ativada: reduz o tamanho de cada
+    // imagem entregue (60-80%) e cacheia no edge da Vercel. Grátis até
+    // 5.000 imagens otimizadas/mês.
     remotePatterns: [
       { protocol: "https", hostname: "**.supabase.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
