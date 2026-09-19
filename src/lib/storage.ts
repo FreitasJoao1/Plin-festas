@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
+import { compressImage } from "@/lib/compress-image";
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB — limite do arquivo ORIGINAL, antes de comprimir
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const EXT_BY_TYPE: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -15,6 +16,14 @@ const EXT_BY_TYPE: Record<string, string> = {
  * permitem upload para quem tem role=admin — a checagem de permissão já
  * acontece no lado do banco, não só no client. Aqui validamos tamanho e
  * tipo do arquivo antes de gastar banda enviando algo inválido.
+ *
+ * Antes de subir, a imagem passa por compressImage() — redimensiona e
+ * reencoda como WebP no próprio navegador. Isso é o que mantém o consumo
+ * de storage baixo mesmo com imagens novas entrando: o bucket nunca recebe
+ * o arquivo bruto de 4-5MB de uma foto de celular, só a versão já enxuta
+ * (tipicamente 100-300KB). cacheControl de 1 ano porque a URL final é
+ * imutável — trocar a imagem de um produto sempre gera um path novo
+ * (random UUID), nunca sobrescreve o mesmo arquivo.
  */
 async function uploadImage(
   file: File,
@@ -32,15 +41,24 @@ async function uploadImage(
     return { error: "Arquivo muito grande (máximo 5MB)." };
   }
 
-  const ext = EXT_BY_TYPE[file.type];
+  let toUpload: File;
+  try {
+    toUpload = await compressImage(file);
+  } catch {
+    // Se a compressão falhar por qualquer motivo (navegador antigo, arquivo
+    // corrompido), segue com o original em vez de bloquear o upload.
+    toUpload = file;
+  }
+
+  const ext = EXT_BY_TYPE[toUpload.type] ?? EXT_BY_TYPE[file.type];
   const path = `${crypto.randomUUID()}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from(bucket)
-    .upload(path, file, {
+    .upload(path, toUpload, {
       cacheControl: "31536000",
       upsert: false,
-      contentType: file.type,
+      contentType: toUpload.type,
     });
 
   if (uploadError) {

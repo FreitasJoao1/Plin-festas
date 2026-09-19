@@ -403,7 +403,12 @@ create trigger orders_client_cancel_guard
 create table if not exists public.booking_settings (
   id integer primary key default 1 check (id = 1),
   weekly_capacity integer not null default 20 check (weekly_capacity > 0),
-  horizon_days integer not null default 180 check (horizon_days > 0)
+  horizon_days integer not null default 180 check (horizon_days > 0),
+  -- Limite automático de pedidos POR DIA. Quando um dia atinge esse
+  -- número de pedidos agendados, ele é bloqueado automaticamente pelo
+  -- trigger abaixo — sem precisar de um day_status_override manual.
+  -- null = sem limite diário (só a cota semanal vale).
+  daily_capacity integer check (daily_capacity is null or daily_capacity > 0)
 );
 insert into public.booking_settings (id) values (1) on conflict (id) do nothing;
 
@@ -413,6 +418,10 @@ insert into public.booking_settings (id) values (1) on conflict (id) do nothing;
 -- rodaram o schema.sql antes ficariam presos em 60 pelo "on conflict do
 -- nothing" acima.
 update public.booking_settings set horizon_days = 180 where id = 1 and horizon_days = 60;
+
+-- Coluna nova em bancos que já rodaram este schema antes dela existir
+-- ("if not exists" no ADD COLUMN evita erro em re-execução).
+alter table public.booking_settings add column if not exists daily_capacity integer;
 
 alter table public.booking_settings enable row level security;
 drop policy if exists "booking_settings_public_read" on public.booking_settings;
@@ -565,8 +574,14 @@ as $$
 $$;
 
 -- Substitui a função de capacidade para também considerar cota por semana
--- (override) e bloqueio manual do dia ('full'/'blocked' impedem o agendamento
--- mesmo que a semana ainda tenha vaga).
+-- (override), bloqueio manual do dia ('full'/'blocked' impedem o
+-- agendamento mesmo que a semana ainda tenha vaga) e o limite automático
+-- diário (daily_capacity): quando o dia atinge esse número de pedidos, o
+-- próprio banco passa a recusar novos agendamentos nele — sem precisar de
+-- nenhuma ação manual do admin. A leitura da agenda (getWeekOccupancies /
+-- booking_week_occupancy) é sempre calculada ao vivo a partir de
+-- public.orders, então tanto a semana quanto o dia refletem o novo total
+-- imediatamente após qualquer INSERT/UPDATE — não existe cache a invalidar.
 create or replace function public.enforce_booking_capacity()
 returns trigger
 language plpgsql
@@ -579,6 +594,7 @@ declare
   v_effective_capacity integer;
   v_day_status text;
   v_occupancy integer;
+  v_day_occupancy integer;
 begin
   if new.booking_date is null then
     return new;
@@ -608,6 +624,22 @@ begin
 
     if v_day_status in ('full', 'blocked') then
       raise exception 'Data indisponível para agendamento (bloqueada pelo administrador).';
+    end if;
+
+    -- Limite automático por dia. Só entra em ação se daily_capacity estiver
+    -- configurado (não-null) — dias sem esse limite continuam valendo só a
+    -- regra da cota semanal, abaixo.
+    if v_settings.daily_capacity is not null then
+      select count(*)::integer into v_day_occupancy
+      from public.orders
+      where booking_date = new.booking_date
+        and booking_status in ('pending_approval', 'approved')
+        and status <> 'cancelado'
+        and id <> coalesce(new.id, '00000000-0000-0000-0000-000000000000'::uuid);
+
+      if v_day_occupancy >= v_settings.daily_capacity then
+        raise exception 'Dia sem vagas disponíveis (limite automático de % pedidos por dia atingido).', v_settings.daily_capacity;
+      end if;
     end if;
 
     v_week_start := new.booking_date - (extract(isodow from new.booking_date)::integer - 1);

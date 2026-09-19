@@ -53,9 +53,15 @@ export default function AdminAgendaPage() {
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => mondayOf(today));
   const [occupancies, setOccupancies] = useState<WeekOccupancyData[]>([]);
   const [dayStatusOverrides, setDayStatusOverrides] = useState<DayStatusOverrideData[]>([]);
+  const [dayOccupancies, setDayOccupancies] = useState<{ date: string; count: number }[]>([]);
   const [horizonDays, setHorizonDays] = useState(180);
+  const [dailyCapacity, setDailyCapacityState] = useState<number | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Edição do limite automático diário.
+  const [dailyCapacityInput, setDailyCapacityInput] = useState("");
+  const [savingDailyCapacity, setSavingDailyCapacity] = useState(false);
 
   // null = visualizando a semana inteira; senão, filtrando por um dia específico.
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
@@ -79,8 +85,12 @@ export default function AdminAgendaPage() {
       .then((data) => {
         if (data.weeks) setOccupancies(data.weeks);
         if (data.settings?.horizon_days) setHorizonDays(data.settings.horizon_days);
+        if (data.settings && "daily_capacity" in data.settings) {
+          setDailyCapacityState(data.settings.daily_capacity);
+        }
         if (data.orders) setOrders(data.orders);
         if (data.dayStatuses) setDayStatusOverrides(data.dayStatuses);
+        if (data.dayOccupancies) setDayOccupancies(data.dayOccupancies);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -89,6 +99,43 @@ export default function AdminAgendaPage() {
     load(visibleWeekStart);
     setSelectedDay(null);
   }, [visibleWeekStart, load]);
+
+  useEffect(() => {
+    setDailyCapacityInput(dailyCapacity === null ? "" : String(dailyCapacity));
+  }, [dailyCapacity]);
+
+  const selectedDayCount = useMemo(
+    () => dayOccupancies.find((d) => d.date === selectedDay)?.count ?? 0,
+    [dayOccupancies, selectedDay]
+  );
+
+  async function saveDailyCapacity() {
+    const parsed = dailyCapacityInput.trim() === "" ? null : Number(dailyCapacityInput);
+    if (parsed !== null && (!Number.isInteger(parsed) || parsed <= 0)) {
+      setFeedback("Limite diário deve ser um número inteiro maior que zero.");
+      return;
+    }
+    setSavingDailyCapacity(true);
+    setFeedback(null);
+    const res = await fetch("/api/admin/agenda/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ daily_capacity: parsed }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setSavingDailyCapacity(false);
+    if (!res.ok) {
+      setFeedback(data.error ?? "Erro ao salvar limite diário.");
+      return;
+    }
+    setDailyCapacityState(parsed);
+    setFeedback(
+      parsed === null
+        ? "Limite automático diário removido."
+        : `Limite automático diário definido em ${parsed} pedidos — vale para todos os dias, a partir de agora.`
+    );
+    load(visibleWeekStart);
+  }
 
   const weekData = occupancies.find((w) => w.week_start === visibleWeekStart);
 
@@ -220,6 +267,47 @@ export default function AdminAgendaPage() {
             </div>
           </div>
 
+          {/* Limite automático diário — vale pra todos os dias, não só a semana visível */}
+          <div className="rounded-3xl border border-pink-100 bg-white p-5">
+            <h2 className="font-semibold text-ink">Bloqueio automático por dia</h2>
+            <p className="mt-1 text-xs text-ink-soft">
+              Ao atingir esse número de pedidos num dia, o próprio sistema para de aceitar
+              novos agendamentos nele — sem precisar bloquear manualmente. Vale para todos os
+              dias e atualiza a semana imediatamente.
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={dailyCapacityInput}
+                onChange={(e) => setDailyCapacityInput(e.target.value)}
+                placeholder="Sem limite"
+                className="w-32 rounded-xl border border-pink-200 px-3 py-2 text-sm focus:border-pink-400 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={saveDailyCapacity}
+                disabled={savingDailyCapacity}
+                className="rounded-xl bg-pink-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-pink-600 disabled:opacity-50"
+              >
+                {savingDailyCapacity ? "Salvando…" : "Salvar"}
+              </button>
+              {dailyCapacity !== null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDailyCapacityInput("");
+                    saveDailyCapacity();
+                  }}
+                  disabled={savingDailyCapacity}
+                  className="rounded-xl border border-pink-200 px-3 py-2 text-sm text-ink-soft transition-colors hover:bg-pink-50"
+                >
+                  Remover limite
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Status do dia selecionado */}
           {selectedDay && (
             <div className="rounded-3xl border border-pink-100 bg-white p-5">
@@ -235,6 +323,11 @@ export default function AdminAgendaPage() {
               </div>
               <p className="mt-1 text-xs text-ink-soft">
                 Sobrescreve a aparência/disponibilidade calculada só para este dia.
+              </p>
+              <p className="mt-1 text-xs font-medium text-ink-soft">
+                {selectedDayCount} pedido{selectedDayCount === 1 ? "" : "s"} agendado
+                {selectedDayCount === 1 ? "" : "s"}
+                {dailyCapacity !== null && ` de ${dailyCapacity} (limite automático)`}
               </p>
               <div className="mt-3 flex flex-col gap-2">
                 {DAY_STATUS_OPTIONS.map((opt) => (

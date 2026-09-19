@@ -366,14 +366,42 @@ export async function updateOrderStatus(
 
 export async function getBookingSettings(): Promise<BookingSettings> {
   const supabase = await createClient();
-  if (!supabase) return { weekly_capacity: 20, horizon_days: 180 };
+  if (!supabase) return { weekly_capacity: 20, horizon_days: 180, daily_capacity: null };
   const { data, error } = await supabase
     .from("booking_settings")
-    .select("weekly_capacity, horizon_days")
+    .select("weekly_capacity, horizon_days, daily_capacity")
     .eq("id", 1)
     .single();
-  if (error || !data) return { weekly_capacity: 20, horizon_days: 180 };
+  if (error || !data) return { weekly_capacity: 20, horizon_days: 180, daily_capacity: null };
   return data;
+}
+
+/**
+ * Define o limite automático de pedidos por dia (daily_capacity). Passar
+ * null remove o limite — dias voltam a valer só a cota semanal. O bloqueio
+ * em si acontece no trigger enforce_booking_capacity (supabase/schema.sql):
+ * assim que um dia atinge esse número de pedidos aprovados/pendentes, o
+ * próprio banco passa a recusar novos agendamentos nele, e a leitura da
+ * agenda (getWeekOccupancies, booking_week_occupancy) é sempre calculada
+ * ao vivo — então a semana reflete o novo total imediatamente, sem
+ * qualquer cache pra invalidar.
+ */
+export async function setDailyCapacity(
+  capacity: number | null
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  if (!supabase) {
+    return { error: "Supabase não está configurado neste ambiente (modo demo)." };
+  }
+  if (capacity !== null && (!Number.isInteger(capacity) || capacity <= 0)) {
+    return { error: "Limite diário deve ser um número inteiro maior que zero." };
+  }
+  const { error } = await supabase
+    .from("booking_settings")
+    .update({ daily_capacity: capacity })
+    .eq("id", 1);
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
 /**
@@ -450,6 +478,35 @@ export async function getWeekOccupancies(
       };
     })
     .sort((a, b) => a.week_start.localeCompare(b.week_start));
+}
+
+/**
+ * Ocupação por DIA (não por semana) num intervalo — usada para mostrar
+ * "X/limite" em cada dia do grid e permitir o bloqueio automático via
+ * daily_capacity. Mesma regra de contagem de booking_week_occupancy:
+ * conta só pending_approval/approved e ignora cancelado.
+ */
+export async function getDayOccupancies(
+  startDate: string,
+  endDate: string
+): Promise<{ date: string; count: number }[]> {
+  const supabase = await createClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("orders")
+    .select("booking_date")
+    .not("booking_date", "is", null)
+    .gte("booking_date", startDate)
+    .lte("booking_date", endDate)
+    .in("booking_status", ["pending_approval", "approved"])
+    .neq("status", "cancelado");
+  if (error || !data) return [];
+
+  const buckets = new Map<string, number>();
+  for (const row of data as { booking_date: string }[]) {
+    buckets.set(row.booking_date, (buckets.get(row.booking_date) ?? 0) + 1);
+  }
+  return Array.from(buckets.entries()).map(([date, count]) => ({ date, count }));
 }
 
 /** Lê os overrides de status de dia dentro de um intervalo, para o grid do calendário. */

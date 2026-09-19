@@ -143,6 +143,8 @@ export interface Order {
 export interface BookingSettings {
   weekly_capacity: number;
   horizon_days: number;
+  /** Limite automático de pedidos por dia; null = sem limite diário. */
+  daily_capacity: number | null;
 }
 
 /** Ocupação agregada de uma semana, para renderizar o calendário. */

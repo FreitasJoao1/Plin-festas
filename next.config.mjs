@@ -1,9 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    // Otimização automática de imagens ativada: reduz o tamanho de cada
-    // imagem entregue (60-80%) e cacheia no edge da Vercel. Grátis até
-    // 5.000 imagens otimizadas/mês.
+    // unoptimized: true — desliga a otimização gerenciada (Vercel/Next
+    // Image Optimization). Essa otimização é o que estava estourando a
+    // cota de 5GB e gerando cobrança. Como as imagens agora já chegam
+    // pré-comprimidas em WebP no upload (ver src/lib/compress-image.ts),
+    // não há mais trabalho de otimização a fazer em runtime — <Image/>
+    // do Next continua funcionando normalmente (lazy load, srcset), só
+    // não reprocessa o arquivo. Isso zera essa fonte de custo.
+    unoptimized: true,
     remotePatterns: [
       { protocol: "https", hostname: "**.supabase.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
@@ -32,6 +37,11 @@ const nextConfig = {
 
     return [
       {
+        // Cache do navegador/CDN para as páginas de produto e imagens
+        // servidas por rota própria (se existirem). As imagens em si vêm
+        // direto do Supabase Storage (cacheControl definido no upload, ver
+        // src/lib/storage.ts) — este bloco cobre apenas o que passa pelo
+        // domínio da Vercel.
         source: "/:path*",
         headers: [
           // Impede que o site seja carregado dentro de um <iframe> em
